@@ -1,0 +1,27 @@
+name: smartfinance_app
+description: >
+  SmartFinance — SPA-style Flutter app with a persistent header/nav shell
+  and role-based access control (SUPERADMIN, ADMIN, STAFF, CUSTOMER).
+publish_to: 'none'
+version: 1.0.0+1
+
+environment:
+  sdk: '>=3.3.0 <4.0.0'
+
+dependencies:
+  flutter:
+    sdk: flutter
+  cupertino_icons: ^1.0.8
+
+  # Drives the SPA-style nested/persistent routing: StatefulShellRoute
+  # keeps the header + bottom nav mounted while only the active tab's
+  # content swaps out, plus declarative redirect() for the RBAC guard.
+  go_router: ^14.6.2
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^4.0.0
+
+flutter:
+  uses-material-design: true
