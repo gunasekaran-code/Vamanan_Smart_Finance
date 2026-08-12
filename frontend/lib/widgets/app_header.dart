@@ -24,12 +24,19 @@ class AppHeader extends StatefulWidget implements PreferredSizeWidget {
 
 class _AppHeaderState extends State<AppHeader> {
   bool _showSearch = false;
-
   final TextEditingController _searchController = TextEditingController();
-
   final FocusNode _searchFocusNode = FocusNode();
-
   bool _isCompactWidth = false;
+
+  final GlobalKey _notificationKey = GlobalKey();
+  final GlobalKey _avatarKey = GlobalKey();
+  final GlobalKey _contentKey = GlobalKey();
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) => _measureHeight());
+  }
 
   @override
   void dispose() {
@@ -41,7 +48,6 @@ class _AppHeaderState extends State<AppHeader> {
   void _toggleSearch() {
     setState(() {
       _showSearch = !_showSearch;
-      _updatePreferredHeight();
     });
 
     if (_showSearch) {
@@ -54,24 +60,44 @@ class _AppHeaderState extends State<AppHeader> {
       _searchController.clear();
       _searchFocusNode.unfocus();
     }
+
+    _scheduleHeightMeasure();
+    // Cross-fade animation is 220ms; measure again once it's fully settled.
+    Future.delayed(const Duration(milliseconds: 240), () {
+      if (mounted) _measureHeight();
+    });
   }
 
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
-    _updatePreferredHeight();
+    _isCompactWidth = MediaQuery.sizeOf(context).width < 380;
+    _scheduleHeightMeasure();
   }
 
-  void _updatePreferredHeight() {
-    widget._preferredHeight = _showSearch ? (_isCompactWidth ? 126 : 132) : 56;
+  void _scheduleHeightMeasure() {
+    WidgetsBinding.instance.addPostFrameCallback((_) => _measureHeight());
+  }
+
+  void _measureHeight() {
+    final box = _contentKey.currentContext?.findRenderObject() as RenderBox?;
+    if (box == null) return;
+    final measured = box.size.height;
+    // Small safety buffer so nothing clips on the last pixel.
+    final target = measured + 2;
+    if ((widget._preferredHeight - target).abs() > 0.5) {
+      setState(() {
+        widget._preferredHeight = target;
+      });
+    }
   }
 
   @override
   Widget build(BuildContext context) {
     _isCompactWidth = MediaQuery.sizeOf(context).width < 380;
-    _updatePreferredHeight();
 
     return Column(
+      key: _contentKey,
       mainAxisSize: MainAxisSize.min,
       children: [
         // ================================================================
@@ -120,6 +146,7 @@ class _AppHeaderState extends State<AppHeader> {
               ),
             ),
             IconButton(
+              key: _notificationKey,
               tooltip: 'Notifications',
               padding: EdgeInsets.zero,
               constraints: BoxConstraints.tightFor(
@@ -130,10 +157,7 @@ class _AppHeaderState extends State<AppHeader> {
               icon: Stack(
                 clipBehavior: Clip.none,
                 children: [
-                  const Icon(
-                    Icons.notifications_none_rounded,
-                    size: 26,
-                  ),
+                  const Icon(Icons.notifications_none_rounded, size: 26),
                   Positioned(
                     right: -2,
                     top: -2,
@@ -143,23 +167,22 @@ class _AppHeaderState extends State<AppHeader> {
                       decoration: BoxDecoration(
                         color: AppColors.kDanger,
                         shape: BoxShape.circle,
-                        border: Border.all(
-                          color: AppColors.kSurface,
-                          width: 1.5,
-                        ),
+                        border:
+                            Border.all(color: AppColors.kSurface, width: 1.5),
                       ),
                     ),
                   ),
                 ],
               ),
               onPressed: () {
-                // Your notification dropdown
+                _showNotificationMenu(context, _notificationKey);
               },
             ),
             InkWell(
+              key: _avatarKey,
               customBorder: const CircleBorder(),
               onTap: () {
-                _showProfileMenu(context);
+                _showProfileMenu(context, _avatarKey);
               },
               child: CircleAvatar(
                 radius: _isCompactWidth ? 18 : 20,
@@ -238,17 +261,14 @@ class _AppHeaderState extends State<AppHeader> {
         ),
         child: Row(
           children: [
-            // Search icon
             Padding(
               padding: EdgeInsets.only(left: _isCompactWidth ? 14 : 16),
               child: Icon(
                 Icons.search_rounded,
-                color: Color(0xFF6B7280),
+                color: const Color(0xFF6B7280),
                 size: _isCompactWidth ? 22 : 24,
               ),
             ),
-
-            // Text field
             Expanded(
               child: TextField(
                 controller: _searchController,
@@ -277,8 +297,6 @@ class _AppHeaderState extends State<AppHeader> {
                 ),
               ),
             ),
-
-            // Clear button
             if (_searchController.text.isNotEmpty)
               GestureDetector(
                 onTap: () {
@@ -289,13 +307,11 @@ class _AppHeaderState extends State<AppHeader> {
                   padding: const EdgeInsets.all(8),
                   child: Icon(
                     Icons.close_rounded,
-                    color: Color(0xFF9CA3AF),
+                    color: const Color(0xFF9CA3AF),
                     size: _isCompactWidth ? 18 : 20,
                   ),
                 ),
               ),
-
-            // Search button
             Padding(
               padding: const EdgeInsets.only(right: 5),
               child: GestureDetector(
@@ -332,52 +348,40 @@ class _AppHeaderState extends State<AppHeader> {
     );
   }
 
-  // ======================================================================
-  // SEARCH ACTION
-  // ======================================================================
-
   void _performSearch(String value) {
     final query = value.trim();
-
-    if (query.isEmpty) {
-      return;
-    }
-
+    if (query.isEmpty) return;
     debugPrint('Searching for: $query');
-
-    // Later you can connect this to:
-    //
-    // Members search
-    // Loan search
-    // Customer search
-    // Payment search
-    // Chit search
-    //
-    // Example:
-    // context.go('${AppRoutes.members}?search=$query');
   }
 
   // ======================================================================
-  // PROFILE MENU
+  // NOTIFICATION MENU
   // ======================================================================
 
-  void _showProfileMenu(BuildContext context) {
-    final renderBox = context.findRenderObject() as RenderBox;
+  void _showNotificationMenu(BuildContext context, GlobalKey anchorKey) {
+    final RenderBox anchorBox =
+        anchorKey.currentContext!.findRenderObject() as RenderBox;
+    final RenderBox overlayBox =
+        Overlay.of(context).context.findRenderObject() as RenderBox;
 
-    final position = renderBox.localToGlobal(Offset.zero);
+    final Offset anchorBottomRight = anchorBox.localToGlobal(
+      anchorBox.size.bottomRight(Offset.zero),
+      ancestor: overlayBox,
+    );
 
     final screenWidth = MediaQuery.of(context).size.width;
+    final double maxMenuWidth = 320.0;
+    final double menuWidth =
+        screenWidth < (maxMenuWidth + 32) ? screenWidth - 32 : maxMenuWidth;
 
     showMenu(
       context: context,
       color: Colors.white,
       elevation: 12,
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(20),
-      ),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
       position: RelativeRect.fromLTRB(
-        screenWidth - 330,
-        position.dy + renderBox.size.height + 8,
+        overlayBox.size.width - menuWidth - 16,
+        anchorBottomRight.dy + 8,
         16,
         0,
       ),
@@ -385,89 +389,197 @@ class _AppHeaderState extends State<AppHeader> {
         PopupMenuItem(
           enabled: false,
           padding: EdgeInsets.zero,
-          child: SizedBox(
-            width: 310,
-            child: _buildProfileMenu(),
+          child: SizedBox(width: menuWidth, child: _buildNotificationMenu()),
+        ),
+      ],
+    );
+  }
+
+  void _showProfileMenu(BuildContext context, GlobalKey anchorKey) {
+    final RenderBox anchorBox =
+        anchorKey.currentContext!.findRenderObject() as RenderBox;
+    final RenderBox overlayBox =
+        Overlay.of(context).context.findRenderObject() as RenderBox;
+
+    final Offset anchorBottomRight = anchorBox.localToGlobal(
+      anchorBox.size.bottomRight(Offset.zero),
+      ancestor: overlayBox,
+    );
+
+    final screenWidth = MediaQuery.of(context).size.width;
+    final double maxMenuWidth = 310.0;
+    final double menuWidth =
+        screenWidth < (maxMenuWidth + 32) ? screenWidth - 32 : maxMenuWidth;
+
+    showMenu(
+      context: context,
+      color: Colors.white,
+      elevation: 12,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+      position: RelativeRect.fromLTRB(
+        overlayBox.size.width - menuWidth - 16,
+        anchorBottomRight.dy + 8,
+        16,
+        0,
+      ),
+      items: [
+        PopupMenuItem(
+          enabled: false,
+          padding: EdgeInsets.zero,
+          child: SizedBox(width: menuWidth, child: _buildProfileMenu()),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildNotificationMenu() {
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const Padding(
+          padding: EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+          child: Text(
+            'Notifications',
+            style: TextStyle(
+              fontWeight: FontWeight.w800,
+              fontSize: 16,
+              color: AppColors.kTextDark,
+            ),
+          ),
+        ),
+        const Divider(height: 1, color: AppColors.kBorder),
+        ListTile(
+          contentPadding:
+              const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+          leading: Container(
+            padding: const EdgeInsets.all(8),
+            decoration: BoxDecoration(
+              color: AppColors.kPrimary.withOpacity(0.15),
+              shape: BoxShape.circle,
+            ),
+            child: const Icon(Icons.download_done_rounded,
+                color: AppColors.kPrimary, size: 20),
+          ),
+          title: const Text('System Update Ready',
+              style: TextStyle(fontWeight: FontWeight.w600, fontSize: 14)),
+          subtitle: const Text(
+              'Core engine v2.4 has been installed successfully.',
+              style: TextStyle(fontSize: 13)),
+          onTap: () => Navigator.pop(context),
+        ),
+        ListTile(
+          contentPadding:
+              const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+          leading: Container(
+            padding: const EdgeInsets.all(8),
+            decoration: BoxDecoration(
+              color: AppColors.kDanger.withOpacity(0.15),
+              shape: BoxShape.circle,
+            ),
+            child: const Icon(Icons.warning_amber_rounded,
+                color: AppColors.kDanger, size: 20),
+          ),
+          title: const Text('Overdue Alert',
+              style: TextStyle(fontWeight: FontWeight.w600, fontSize: 14)),
+          subtitle: const Text('3 branches have pending audit clearance.',
+              style: TextStyle(fontSize: 13)),
+          onTap: () => Navigator.pop(context),
+        ),
+        const Divider(height: 1, color: AppColors.kBorder),
+        InkWell(
+          onTap: () => Navigator.pop(context),
+          borderRadius: const BorderRadius.only(
+              bottomLeft: Radius.circular(20),
+              bottomRight: Radius.circular(20)),
+          child: Container(
+            width: double.infinity,
+            padding: const EdgeInsets.symmetric(vertical: 12),
+            child: const Center(
+              child: Text(
+                'Mark all as read',
+                style: TextStyle(
+                  color: AppColors.kPrimary,
+                  fontWeight: FontWeight.w600,
+                  fontSize: 14,
+                ),
+              ),
+            ),
           ),
         ),
       ],
     );
   }
 
+  // ======================================================================
+  // PROFILE MENU
+  // ======================================================================
+
   Widget _buildProfileMenu() {
     return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
       mainAxisSize: MainAxisSize.min,
       children: [
+        const SizedBox(height: 8),
         ListTile(
+          contentPadding:
+              const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
           leading: CircleAvatar(
             backgroundColor: AppColors.kPrimary,
             child: Text(
               widget.user?.initials ?? 'A',
-              style: const TextStyle(
-                color: Colors.white,
-              ),
+              style: const TextStyle(color: Colors.white),
             ),
           ),
           title: Text(
             widget.user?.name ?? 'CF Admin',
-            style: const TextStyle(
-              fontWeight: FontWeight.w700,
-            ),
+            style: const TextStyle(fontWeight: FontWeight.w700),
           ),
-          subtitle: Text(
-            widget.user?.email ?? 'admin@gmail.com',
-          ),
+          subtitle: Text(widget.user?.email ?? 'admin@gmail.com'),
         ),
         const Divider(),
         ListTile(
-          leading: const Icon(
-            Icons.person_outline,
-          ),
+          contentPadding:
+              const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+          horizontalTitleGap: 12,
+          leading: const Icon(Icons.person_outline),
           title: const Text('My Profile'),
-          subtitle: const Text(
-            'Account settings & info',
-          ),
+          subtitle: const Text('Account settings & info'),
           onTap: () {
             Navigator.pop(context);
             context.go(AppRoutes.profile);
           },
         ),
         ListTile(
-          leading: const Icon(
-            Icons.settings_outlined,
-          ),
+          contentPadding:
+              const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+          horizontalTitleGap: 12,
+          leading: const Icon(Icons.settings_outlined),
           title: const Text('System Config'),
-          subtitle: const Text(
-            'Core engine settings',
-          ),
+          subtitle: const Text('Core engine settings'),
           onTap: () {
             Navigator.pop(context);
-            context.go(
-              AppRoutes.engineSettings,
-            );
+            context.go(AppRoutes.engineSettings);
           },
         ),
         ListTile(
-          leading: const Icon(
-            Icons.shield_outlined,
-          ),
+          contentPadding:
+              const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+          horizontalTitleGap: 12,
+          leading: const Icon(Icons.shield_outlined),
           title: const Text('Security & 2FA'),
-          subtitle: const Text(
-            'Protect your account',
-          ),
+          subtitle: const Text('Protect your account'),
           onTap: () {
             Navigator.pop(context);
-            context.go(
-              AppRoutes.security,
-            );
+            context.go(AppRoutes.security);
           },
         ),
         const Divider(),
         ListTile(
-          leading: const Icon(
-            Icons.logout,
-            color: AppColors.kDanger,
-          ),
+          contentPadding:
+              const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+          horizontalTitleGap: 12,
+          leading: const Icon(Icons.logout, color: AppColors.kDanger),
           title: const Text(
             'Sign Out',
             style: TextStyle(
@@ -477,14 +589,11 @@ class _AppHeaderState extends State<AppHeader> {
           ),
           onTap: () {
             Navigator.pop(context);
-
             SessionService.instance.logout();
-
-            context.go(
-              AppRoutes.login,
-            );
+            context.go(AppRoutes.login);
           },
         ),
+        const SizedBox(height: 8),
       ],
     );
   }
@@ -506,9 +615,7 @@ class _BrandTitle extends StatelessWidget {
           TextSpan(text: 'Smart'),
           TextSpan(
             text: 'Finance',
-            style: TextStyle(
-              color: AppColors.kPrimary,
-            ),
+            style: TextStyle(color: AppColors.kPrimary),
           ),
         ],
       ),

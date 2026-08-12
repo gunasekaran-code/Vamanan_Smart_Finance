@@ -1,6 +1,5 @@
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
-
 import '../routes/app_routes.dart';
 import '../services/permission_service.dart';
 import '../services/session_service.dart';

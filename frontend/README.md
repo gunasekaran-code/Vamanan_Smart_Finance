@@ -107,7 +107,7 @@ static const List<NavEntry> navEntries = [
 
 | Page      | Super Admin | Admin | Staff | Customer |
 |-----------|:-----------:|:-----:|:-----:|:--------:|
-| Dashboard | ✅ | ✅ | ✅ | ✅ |
+| Dashboard | ✅           |  ✅   |  ✅   |    ✅    |
 | Members   | ✅ | ✅ | ✅ | ❌ |
 | Verify    | ✅ | ✅ | ✅ | ❌ |
 | Reports   | ✅ | ✅ | ❌ | ❌ |

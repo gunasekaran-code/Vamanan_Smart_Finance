@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
-
+import '../widgets/app_toast.dart';
 import '../screens/dashboard/dashboard_screen.dart';
 import '../screens/login_screen.dart';
 import '../screens/members/members_screen.dart';
@@ -26,6 +26,7 @@ class AppRouter {
   AppRouter._();
 
   static final GoRouter router = GoRouter(
+    navigatorKey: ToastService.navigatorKey,
     initialLocation: AppRoutes.splash,
     debugLogDiagnostics: false,
     // GoRouter re-evaluates `redirect` whenever SessionService calls

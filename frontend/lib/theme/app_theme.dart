@@ -1,8 +1,4 @@
 import 'package:flutter/material.dart';
-
-/// SmartFinance design tokens. Keep every hard-coded color out of
-/// widgets and behind one of these instead, so a palette change is a
-/// one-file edit.
 class AppColors {
   AppColors._();
 
