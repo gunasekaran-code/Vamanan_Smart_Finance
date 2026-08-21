@@ -9,14 +9,16 @@ import '../theme/app_theme.dart';
 class AppPage extends StatelessWidget {
   final String title;
   final String? subtitle;
+  final Widget? subtitleWidget;
   final List<Widget> children;
 
   const AppPage({
     super.key,
     required this.title,
     this.subtitle,
+    this.subtitleWidget,
     required this.children,
-  });
+  }) : assert(subtitle == null || subtitleWidget == null);
 
   @override
   Widget build(BuildContext context) {
@@ -39,6 +41,9 @@ class AppPage extends StatelessWidget {
               subtitle!,
               style: const TextStyle(fontSize: 13, color: AppColors.kTextMuted),
             ),
+          ] else if (subtitleWidget != null) ...[
+            const SizedBox(height: 4),
+            subtitleWidget!,
           ],
           const SizedBox(height: 20),
           ...children,

@@ -1,9 +1,9 @@
 import 'package:flutter/material.dart';
-
 import '../../theme/app_theme.dart';
 import '../../theme/confirm_dialog.dart';
 import '../../theme/stylish_form.dart';
 import '../../widgets/app_page.dart';
+import '../../widgets/app_toast.dart';
 
 class Member {
   final String id;
@@ -34,8 +34,8 @@ class MembersScreen extends StatefulWidget {
 
 class _MembersScreenState extends State<MembersScreen> {
   // TODO: replace with a paginated list from GET /members.
-  final List<Member> _members = const [
-    Member(
+  final List<Member> _members = [
+    const Member(
       id: '1',
       name: 'Roki',
       phone: '9786204074',
@@ -44,7 +44,7 @@ class _MembersScreenState extends State<MembersScreen> {
       accountType: 'Walk-in only',
       dateJoined: 'Apr 08, 2026',
     ),
-    Member(
+    const Member(
       id: '2',
       name: 'Jessica',
       phone: '9512364870',
@@ -53,7 +53,7 @@ class _MembersScreenState extends State<MembersScreen> {
       accountType: 'Portal Active',
       dateJoined: 'Apr 09, 2026',
     ),
-    Member(
+    const Member(
       id: '3',
       name: 'Varshini',
       phone: '7685940321',
@@ -62,7 +62,7 @@ class _MembersScreenState extends State<MembersScreen> {
       accountType: 'Walk-in only',
       dateJoined: 'Apr 15, 2026',
     ),
-    Member(
+    const Member(
       id: '5',
       name: 'VEERASAMY.K',
       phone: '9677490097',
@@ -86,11 +86,18 @@ class _MembersScreenState extends State<MembersScreen> {
       setState(() {
         _members.removeWhere((m) => m.id == member.id);
       });
+      
+      ToastService.show(
+        title: 'Member Deleted',
+        message: '${member.name} has been successfully removed.',
+        type: ToastType.success,
+      );
     }
   }
 
-  void _openMemberForm([Member? member]) {
-    showModalBottomSheet(
+  // Updated function to handle create, edit, and error states
+  Future<void> _openMemberForm([Member? member]) async {
+    final result = await showModalBottomSheet(
       context: context,
       isScrollControlled: true,
       useSafeArea: true,
@@ -99,6 +106,33 @@ class _MembersScreenState extends State<MembersScreen> {
         return StylishForm(member: member);
       },
     );
+
+    // If the modal was dismissed without taking action, result will be null.
+    if (result == null) return;
+
+    // Check the result returned by StylishForm (e.g., Navigator.pop(context, true))
+    if (result == true || result is Member) {
+      final isNew = member == null;
+      
+      ToastService.show(
+        title: isNew ? 'Member Created' : 'Profile Updated',
+        message: isNew 
+            ? 'New member has been successfully added to the system.'
+            : 'Member details have been successfully updated.',
+        type: ToastType.success,
+      );
+      
+      // TODO: If `result` is a Member object, you can update your `_members` list here
+      // setState(() { ... });
+      
+    } else {
+      // If the form returns something else (like an error string), handle it as an error
+      ToastService.show(
+        title: 'Action Failed',
+        message: result is String ? result : 'An unexpected error occurred while saving.',
+        type: ToastType.error,
+      );
+    }
   }
 
   @override

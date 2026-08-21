@@ -4,10 +4,6 @@ import '../models/user_role.dart';
 import '../services/permission_service.dart';
 import '../theme/app_theme.dart';
 
-/// Bottom tab bar. Items the current role can't access are removed
-/// entirely (as opposed to [AppDrawer], which disables them) so the
-/// primary nav only ever shows destinations that actually work for
-/// this user.
 class AppBottomNav extends StatelessWidget {
   final UserRole role;
   final int activeIndex;
@@ -22,11 +18,9 @@ class AppBottomNav extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final visible = <MapEntry<int, NavEntry>>[
-      for (int i = 0; i < PermissionService.navEntries.length; i++)
-        if (PermissionService.navEntries[i].isAllowedFor(role))
-          MapEntry(i, PermissionService.navEntries[i]),
-    ];
+    // 1. Get the sequential list of allowed tabs for this role.
+    // This perfectly matches the router's branch indices (0, 1, 2, 3...)
+    final allowedEntries = PermissionService.entriesFor(role);
 
     return Container(
       decoration: const BoxDecoration(
@@ -39,13 +33,13 @@ class AppBottomNav extends StatelessWidget {
           height: 64,
           child: Row(
             children: [
-              for (final entry in visible)
+              for (int i = 0; i < allowedEntries.length; i++)
                 Expanded(
                   child: _NavButton(
-                    label: entry.value.label,
-                    icon: entry.value.icon,
-                    selected: entry.key == activeIndex,
-                    onTap: () => onSelectBranch(entry.key),
+                    label: allowedEntries[i].label,
+                    icon: allowedEntries[i].icon,
+                    selected: i == activeIndex,
+                    onTap: () => onSelectBranch(i),
                   ),
                 ),
             ],

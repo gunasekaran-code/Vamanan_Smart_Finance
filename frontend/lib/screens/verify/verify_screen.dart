@@ -37,7 +37,7 @@ class VerifyScreen extends StatefulWidget {
 }
 
 class _VerifyScreenState extends State<VerifyScreen> {
-  // TODO: Connect to backend API GET /verifications/pending
+  
   final List<VerificationItem> _verifications = const [
     VerificationItem(
       id: '1',

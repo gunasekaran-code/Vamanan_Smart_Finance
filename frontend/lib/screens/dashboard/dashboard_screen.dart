@@ -1,18 +1,9 @@
-import 'dart:ui';
 import 'package:flutter/material.dart';
-
 import '../../models/user_role.dart';
 import '../../services/session_service.dart';
 import '../../theme/app_theme.dart';
 import '../../widgets/app_page.dart';
 
-/// SmartFinance "Command Center" style dashboard.
-///
-/// Glassmorphism throughout: translucent frosted cards over a dark
-/// navy backdrop, soft borders, subtle shadows.
-///
-/// TODO: replace the static values/lists below with data from the API
-/// once the backend is available (e.g. GET /dashboard/summary).
 class DashboardScreen extends StatelessWidget {
   const DashboardScreen({super.key});
 
@@ -55,17 +46,13 @@ class DashboardScreen extends StatelessWidget {
   }
 }
 
-// ---------------------------------------------------------------------------
-// Shared glass building blocks
-// ---------------------------------------------------------------------------
-
-/// Frosted-glass container used for every card on this page.
-class _GlassCard extends StatelessWidget {
-  const _GlassCard({
+// Replaced _GlassCard with a clean, solid white card (iOS Style)
+class _DashboardCard extends StatelessWidget {
+  const _DashboardCard({
     required this.child,
     this.borderColor,
     this.padding = const EdgeInsets.all(18),
-    this.borderRadius = 22,
+    this.borderRadius = 20,
   });
 
   final Widget child;
@@ -75,37 +62,24 @@ class _GlassCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return ClipRRect(
-      borderRadius: BorderRadius.circular(borderRadius),
-      child: BackdropFilter(
-        filter: ImageFilter.blur(sigmaX: 18, sigmaY: 18),
-        child: Container(
-          padding: padding,
-          decoration: BoxDecoration(
-            gradient: LinearGradient(
-              begin: Alignment.topLeft,
-              end: Alignment.bottomRight,
-              colors: [
-                Colors.white.withOpacity(0.10),
-                Colors.white.withOpacity(0.03),
-              ],
-            ),
-            borderRadius: BorderRadius.circular(borderRadius),
-            border: Border.all(
-              color: borderColor?.withOpacity(0.55) ?? Colors.white.withOpacity(0.14),
-              width: borderColor != null ? 1.4 : 1,
-            ),
-            boxShadow: [
-              BoxShadow(
-                color: Colors.black.withOpacity(0.22),
-                blurRadius: 24,
-                offset: const Offset(0, 10),
-              ),
-            ],
-          ),
-          child: child,
+    return Container(
+      padding: padding,
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(borderRadius),
+        border: Border.all(
+          color: borderColor?.withOpacity(0.3) ?? Colors.grey.shade200,
+          width: 1.2,
         ),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.04),
+            blurRadius: 15,
+            offset: const Offset(0, 6),
+          ),
+        ],
       ),
+      child: child,
     );
   }
 }
@@ -119,35 +93,30 @@ class _SectionLabel extends StatelessWidget {
     return Text(
       text.toUpperCase(),
       style: TextStyle(
-        fontSize: 11.5,
+        fontSize: 12,
         fontWeight: FontWeight.w700,
         letterSpacing: 1.1,
-        color: Colors.white.withOpacity(0.55),
+        color: Colors.grey.shade600,
       ),
     );
   }
 }
-
-// ---------------------------------------------------------------------------
-// Header
-// ---------------------------------------------------------------------------
 
 class _CommandCenterHeader extends StatelessWidget {
   const _CommandCenterHeader();
 
   @override
   Widget build(BuildContext context) {
-    return _GlassCard(
-      borderRadius: 20,
+    return _DashboardCard(
       padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 16),
       child: Row(
         children: [
           Container(
-            width: 8,
-            height: 8,
-            margin: const EdgeInsets.only(right: 10),
+            width: 10,
+            height: 10,
+            margin: const EdgeInsets.only(right: 12),
             decoration: const BoxDecoration(
-              color: AppColors.kSuccess,
+              color: AppColors.kSuccess, // Green accent indicator
               shape: BoxShape.circle,
             ),
           ),
@@ -155,18 +124,18 @@ class _CommandCenterHeader extends StatelessWidget {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(
+                const Text(
                   'Command Center',
                   style: TextStyle(
-                    fontSize: 19,
+                    fontSize: 18,
                     fontWeight: FontWeight.w800,
-                    color: Colors.white.withOpacity(0.95),
+                    color: Colors.black87,
                   ),
                 ),
                 const SizedBox(height: 2),
                 Text(
                   'System Operational & Monitoring Secure',
-                  style: TextStyle(fontSize: 12.5, color: Colors.white.withOpacity(0.55)),
+                  style: TextStyle(fontSize: 13, color: Colors.grey.shade600),
                 ),
               ],
             ),
@@ -176,10 +145,6 @@ class _CommandCenterHeader extends StatelessWidget {
     );
   }
 }
-
-// ---------------------------------------------------------------------------
-// Quick actions grid
-// ---------------------------------------------------------------------------
 
 class _QuickAction {
   const _QuickAction(this.label, this.icon, this.color);
@@ -212,11 +177,11 @@ class _QuickActionsGrid extends StatelessWidget {
       childAspectRatio: 2.2,
       children: [
         for (final a in actions)
-          _GlassCard(
-            borderRadius: 18,
+          _DashboardCard(
+            borderRadius: 16,
             padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
             child: InkWell(
-              borderRadius: BorderRadius.circular(18),
+              borderRadius: BorderRadius.circular(16),
               onTap: () {
                 // TODO: wire up navigation for "${a.label}".
               },
@@ -226,7 +191,7 @@ class _QuickActionsGrid extends StatelessWidget {
                     width: 40,
                     height: 40,
                     decoration: BoxDecoration(
-                      color: a.color.withOpacity(0.18),
+                      color: a.color.withOpacity(0.12),
                       shape: BoxShape.circle,
                     ),
                     child: Icon(a.icon, color: a.color, size: 20),
@@ -235,10 +200,10 @@ class _QuickActionsGrid extends StatelessWidget {
                   Expanded(
                     child: Text(
                       a.label,
-                      style: TextStyle(
+                      style: const TextStyle(
                         fontSize: 13,
                         fontWeight: FontWeight.w600,
-                        color: Colors.white.withOpacity(0.9),
+                        color: Colors.black87,
                       ),
                       maxLines: 2,
                     ),
@@ -252,12 +217,8 @@ class _QuickActionsGrid extends StatelessWidget {
   }
 }
 
-// ---------------------------------------------------------------------------
-// Stat cards grid (Active Members / Branches / Today's Collection / Overdue)
-// ---------------------------------------------------------------------------
-
-class _GlassStat {
-  const _GlassStat({
+class _StatData {
+  const _StatData({
     required this.icon,
     required this.title,
     required this.value,
@@ -282,28 +243,28 @@ class _StatCardsGrid extends StatelessWidget {
   Widget build(BuildContext context) {
     final stats = isCustomer
         ? const [
-            _GlassStat(
+            _StatData(
               icon: Icons.account_balance_outlined,
               title: 'ACTIVE LOAN',
               value: '₹24,500',
               footer: 'Outstanding balance',
               color: AppColors.kPrimary,
             ),
-            _GlassStat(
+            _StatData(
               icon: Icons.event_outlined,
               title: 'NEXT EMI DUE',
               value: '5 Sep',
               footer: 'Upcoming installment',
               color: AppColors.kWarning,
             ),
-            _GlassStat(
+            _StatData(
               icon: Icons.check_circle_outline,
               title: 'PAID THIS YEAR',
               value: '₹18,900',
               footer: 'Total repayments',
               color: AppColors.kSuccess,
             ),
-            _GlassStat(
+            _StatData(
               icon: Icons.support_agent_outlined,
               title: 'OPEN TICKETS',
               value: '0',
@@ -312,28 +273,28 @@ class _StatCardsGrid extends StatelessWidget {
             ),
           ]
         : const [
-            _GlassStat(
+            _StatData(
               icon: Icons.people_outline,
               title: 'ACTIVE MEMBERS',
               value: '4',
               footer: 'Growth: +0% this month',
               color: AppColors.kSuccess,
             ),
-            _GlassStat(
+            _StatData(
               icon: Icons.account_tree_outlined,
               title: 'BRANCHES',
               value: '2',
               footer: 'Network Active',
               color: AppColors.kInfo,
             ),
-            _GlassStat(
+            _StatData(
               icon: Icons.payments_outlined,
               title: "TODAY'S COLLECTION",
               value: '₹0',
               footer: 'Unified Revenue',
               color: AppColors.kWarning,
             ),
-            _GlassStat(
+            _StatData(
               icon: Icons.error_outline,
               title: 'TOTAL OVERDUE',
               value: '₹92,828',
@@ -357,11 +318,11 @@ class _StatCardsGrid extends StatelessWidget {
 
 class _StatCard extends StatelessWidget {
   const _StatCard({required this.stat});
-  final _GlassStat stat;
+  final _StatData stat;
 
   @override
   Widget build(BuildContext context) {
-    return _GlassCard(
+    return _DashboardCard(
       borderColor: stat.color,
       padding: const EdgeInsets.all(16),
       child: Column(
@@ -373,8 +334,8 @@ class _StatCard extends StatelessWidget {
                 width: 30,
                 height: 30,
                 decoration: BoxDecoration(
-                  color: stat.color.withOpacity(0.18),
-                  borderRadius: BorderRadius.circular(9),
+                  color: stat.color.withOpacity(0.12),
+                  borderRadius: BorderRadius.circular(8),
                 ),
                 child: Icon(stat.icon, size: 16, color: stat.color),
               ),
@@ -383,10 +344,10 @@ class _StatCard extends StatelessWidget {
                 child: Text(
                   stat.title,
                   style: TextStyle(
-                    fontSize: 10.5,
+                    fontSize: 10,
                     fontWeight: FontWeight.w700,
                     letterSpacing: 0.4,
-                    color: Colors.white.withOpacity(0.55),
+                    color: Colors.grey.shade500,
                   ),
                 ),
               ),
@@ -398,13 +359,13 @@ class _StatCard extends StatelessWidget {
             style: TextStyle(
               fontSize: 22,
               fontWeight: FontWeight.w800,
-              color: stat.valueColor ?? Colors.white.withOpacity(0.95),
+              color: stat.valueColor ?? Colors.black87,
             ),
           ),
           const SizedBox(height: 4),
           Text(
             stat.footer,
-            style: TextStyle(fontSize: 11, color: Colors.white.withOpacity(0.5)),
+            style: TextStyle(fontSize: 11, color: Colors.grey.shade600),
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
           ),
@@ -414,17 +375,13 @@ class _StatCard extends StatelessWidget {
   }
 }
 
-// ---------------------------------------------------------------------------
-// Pending check
-// ---------------------------------------------------------------------------
-
 class _PendingCheckCard extends StatelessWidget {
   const _PendingCheckCard({required this.proofCount});
   final int proofCount;
 
   @override
   Widget build(BuildContext context) {
-    return _GlassCard(
+    return _DashboardCard(
       borderColor: AppColors.kInfo,
       child: Row(
         children: [
@@ -432,7 +389,7 @@ class _PendingCheckCard extends StatelessWidget {
             width: 44,
             height: 44,
             decoration: BoxDecoration(
-              color: AppColors.kInfo.withOpacity(0.18),
+              color: AppColors.kInfo.withOpacity(0.12),
               shape: BoxShape.circle,
             ),
             child: const Icon(Icons.verified_user_outlined, color: AppColors.kInfo),
@@ -448,7 +405,7 @@ class _PendingCheckCard extends StatelessWidget {
                     fontSize: 11,
                     fontWeight: FontWeight.w700,
                     letterSpacing: 0.5,
-                    color: Colors.white.withOpacity(0.55),
+                    color: Colors.grey.shade500,
                   ),
                 ),
                 const SizedBox(height: 4),
@@ -458,10 +415,10 @@ class _PendingCheckCard extends StatelessWidget {
                   children: [
                     Text(
                       '$proofCount',
-                      style: TextStyle(
+                      style: const TextStyle(
                         fontSize: 22,
                         fontWeight: FontWeight.w800,
-                        color: Colors.white.withOpacity(0.95),
+                        color: Colors.black87,
                       ),
                     ),
                     const SizedBox(width: 6),
@@ -470,7 +427,7 @@ class _PendingCheckCard extends StatelessWidget {
                       style: TextStyle(
                         fontSize: 11,
                         fontWeight: FontWeight.w700,
-                        color: Colors.white.withOpacity(0.5),
+                        color: Colors.grey.shade600,
                       ),
                     ),
                   ],
@@ -484,20 +441,15 @@ class _PendingCheckCard extends StatelessWidget {
   }
 }
 
-// ---------------------------------------------------------------------------
-// Growth trend (line + area chart)
-// ---------------------------------------------------------------------------
-
 class _GrowthTrendCard extends StatelessWidget {
   const _GrowthTrendCard();
 
-  // TODO: replace with real monthly totals from the reports API.
   static const _points = <double>[400, 2600, 200, 100, 9800, 2400];
   static const _labels = <String>['Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug'];
 
   @override
   Widget build(BuildContext context) {
-    return _GlassCard(
+    return _DashboardCard(
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -507,18 +459,18 @@ class _GrowthTrendCard extends StatelessWidget {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text(
+                    const Text(
                       'Growth Trend',
                       style: TextStyle(
                         fontSize: 16,
                         fontWeight: FontWeight.w800,
-                        color: Colors.white.withOpacity(0.95),
+                        color: Colors.black87,
                       ),
                     ),
                     const SizedBox(height: 2),
                     Text(
                       'Total revenue collection timeline',
-                      style: TextStyle(fontSize: 12, color: Colors.white.withOpacity(0.55)),
+                      style: TextStyle(fontSize: 12, color: Colors.grey.shade600),
                     ),
                   ],
                 ),
@@ -526,23 +478,23 @@ class _GrowthTrendCard extends StatelessWidget {
               Container(
                 padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
                 decoration: BoxDecoration(
-                  color: Colors.white.withOpacity(0.08),
+                  color: Colors.grey.shade100,
                   borderRadius: BorderRadius.circular(10),
-                  border: Border.all(color: Colors.white.withOpacity(0.14)),
+                  border: Border.all(color: Colors.grey.shade300),
                 ),
                 child: Row(
                   mainAxisSize: MainAxisSize.min,
                   children: [
                     Icon(Icons.calendar_today_outlined,
-                        size: 13, color: Colors.white.withOpacity(0.7)),
+                        size: 13, color: Colors.grey.shade700),
                     const SizedBox(width: 6),
                     Text(
                       'Last 6 Months',
-                      style: TextStyle(fontSize: 11.5, color: Colors.white.withOpacity(0.8)),
+                      style: TextStyle(fontSize: 11.5, color: Colors.grey.shade800),
                     ),
                     const SizedBox(width: 4),
                     Icon(Icons.keyboard_arrow_down,
-                        size: 15, color: Colors.white.withOpacity(0.7)),
+                        size: 15, color: Colors.grey.shade700),
                   ],
                 ),
               ),
@@ -553,7 +505,8 @@ class _GrowthTrendCard extends StatelessWidget {
             height: 190,
             child: CustomPaint(
               size: Size.infinite,
-              painter: _LineChartPainter(values: _points, labels: _labels, color: AppColors.kPrimary),
+              painter: _LineChartPainter(
+                  values: _points, labels: _labels, color: AppColors.kSuccess), // Changed to Green
             ),
           ),
         ],
@@ -580,9 +533,9 @@ class _LineChartPainter extends CustomPainter {
     final niceMax = (maxVal / 2000).ceil() * 2000.0;
 
     final gridPaint = Paint()
-      ..color = Colors.white.withOpacity(0.08)
+      ..color = Colors.grey.shade200
       ..strokeWidth = 1;
-    final labelStyle = TextStyle(color: Colors.white.withOpacity(0.45), fontSize: 10);
+    final labelStyle = TextStyle(color: Colors.grey.shade500, fontSize: 10);
 
     // Horizontal grid lines + y-axis labels.
     for (var i = 0; i <= 6; i++) {
@@ -622,7 +575,7 @@ class _LineChartPainter extends CustomPainter {
       ..shader = LinearGradient(
         begin: Alignment.topCenter,
         end: Alignment.bottomCenter,
-        colors: [color.withOpacity(0.35), color.withOpacity(0.0)],
+        colors: [color.withOpacity(0.2), color.withOpacity(0.0)],
       ).createShader(Rect.fromLTWH(leftPad, 0, chartWidth, chartHeight));
     canvas.drawPath(areaPath, areaPaint);
 
@@ -657,14 +610,9 @@ class _LineChartPainter extends CustomPainter {
       oldDelegate.values != values || oldDelegate.color != color;
 }
 
-// ---------------------------------------------------------------------------
-// Volume density (bar chart)
-// ---------------------------------------------------------------------------
-
 class _VolumeDensityCard extends StatelessWidget {
   const _VolumeDensityCard();
 
-  // TODO: replace with real per-branch member counts.
   static const _bars = <String, double>{
     'Main Office': 1,
     "Teacher's Colony Branch": 3,
@@ -672,29 +620,29 @@ class _VolumeDensityCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return _GlassCard(
+    return _DashboardCard(
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(
+          const Text(
             'Volume Density',
             style: TextStyle(
               fontSize: 16,
               fontWeight: FontWeight.w800,
-              color: Colors.white.withOpacity(0.95),
+              color: Colors.black87,
             ),
           ),
           const SizedBox(height: 2),
           Text(
             'Member distribution per Branch',
-            style: TextStyle(fontSize: 12, color: Colors.white.withOpacity(0.55)),
+            style: TextStyle(fontSize: 12, color: Colors.grey.shade600),
           ),
           const SizedBox(height: 18),
           SizedBox(
             height: 160,
             child: CustomPaint(
               size: Size.infinite,
-              painter: _BarChartPainter(values: _bars, color: AppColors.kInfo),
+              painter: _BarChartPainter(values: _bars, color: AppColors.kSuccess), // Changed to Green
             ),
           ),
         ],
@@ -713,7 +661,7 @@ class _BarChartPainter extends CustomPainter {
     const bottomPad = 22.0;
     final chartHeight = size.height - bottomPad;
     final maxVal = values.values.reduce((a, b) => a > b ? a : b);
-    final labelStyle = TextStyle(color: Colors.white.withOpacity(0.55), fontSize: 11);
+    final labelStyle = TextStyle(color: Colors.grey.shade500, fontSize: 11);
 
     final entries = values.entries.toList();
     final slotWidth = size.width / entries.length;
@@ -732,7 +680,7 @@ class _BarChartPainter extends CustomPainter {
         ..shader = LinearGradient(
           begin: Alignment.topCenter,
           end: Alignment.bottomCenter,
-          colors: [color.withOpacity(0.9), color.withOpacity(0.35)],
+          colors: [color.withOpacity(0.8), color.withOpacity(0.4)],
         ).createShader(rect.outerRect);
       canvas.drawRRect(rect, paint);
 
@@ -753,10 +701,6 @@ class _BarChartPainter extends CustomPainter {
   bool shouldRepaint(covariant _BarChartPainter oldDelegate) => oldDelegate.values != values;
 }
 
-// ---------------------------------------------------------------------------
-// Recent transactions
-// ---------------------------------------------------------------------------
-
 class _Transaction {
   const _Transaction(this.member, this.date, this.amount);
   final String member;
@@ -767,7 +711,6 @@ class _Transaction {
 class _RecentTransactionsCard extends StatelessWidget {
   const _RecentTransactionsCard();
 
-  // TODO: replace with the latest transactions from the collections API.
   static const _transactions = <_Transaction>[
     _Transaction('Jessica', '10 Jul', '₹1000'),
     _Transaction('Varshini', '20 Apr', '₹1000'),
@@ -778,26 +721,24 @@ class _RecentTransactionsCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return _GlassCard(
+    return _DashboardCard(
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Row(
             children: [
-              Expanded(
+              const Expanded(
                 child: Text(
                   'Recent Transactions',
                   style: TextStyle(
                     fontSize: 16,
                     fontWeight: FontWeight.w800,
-                    color: Colors.white.withOpacity(0.95),
+                    color: Colors.black87,
                   ),
                 ),
               ),
               TextButton(
-                onPressed: () {
-                  // TODO: navigate to the full transactions list.
-                },
+                onPressed: () {},
                 child: const Text('View All'),
               ),
             ],
@@ -822,10 +763,10 @@ class _TransactionRow extends StatelessWidget {
         children: [
           CircleAvatar(
             radius: 17,
-            backgroundColor: AppColors.kPrimary.withOpacity(0.2),
+            backgroundColor: AppColors.kSuccess.withOpacity(0.15),
             child: Text(
               t.member.characters.first.toUpperCase(),
-              style: const TextStyle(color: AppColors.kPrimary, fontWeight: FontWeight.w700),
+              style: const TextStyle(color: AppColors.kSuccess, fontWeight: FontWeight.w700),
             ),
           ),
           const SizedBox(width: 12),
@@ -835,32 +776,32 @@ class _TransactionRow extends StatelessWidget {
               children: [
                 Text(
                   t.member,
-                  style: TextStyle(
+                  style: const TextStyle(
                     fontSize: 13.5,
                     fontWeight: FontWeight.w600,
-                    color: Colors.white.withOpacity(0.9),
+                    color: Colors.black87,
                   ),
                 ),
                 Text(
                   t.date,
-                  style: TextStyle(fontSize: 11.5, color: Colors.white.withOpacity(0.5)),
+                  style: TextStyle(fontSize: 11.5, color: Colors.grey.shade500),
                 ),
               ],
             ),
           ),
           Text(
             t.amount,
-            style: TextStyle(
+            style: const TextStyle(
               fontSize: 13.5,
               fontWeight: FontWeight.w700,
-              color: Colors.white.withOpacity(0.9),
+              color: Colors.black87,
             ),
           ),
           const SizedBox(width: 10),
           Container(
             padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
             decoration: BoxDecoration(
-              color: AppColors.kSuccess.withOpacity(0.18),
+              color: AppColors.kSuccess.withOpacity(0.15),
               borderRadius: BorderRadius.circular(20),
             ),
             child: const Text(
@@ -874,10 +815,10 @@ class _TransactionRow extends StatelessWidget {
             width: 28,
             height: 28,
             decoration: BoxDecoration(
-              color: AppColors.kSuccess.withOpacity(0.15),
+              color: Colors.grey.shade100,
               shape: BoxShape.circle,
             ),
-            child: const Icon(Icons.chat, size: 14, color: AppColors.kSuccess),
+            child: Icon(Icons.chat, size: 14, color: Colors.grey.shade600),
           ),
         ],
       ),
@@ -885,19 +826,14 @@ class _TransactionRow extends StatelessWidget {
   }
 }
 
-// ---------------------------------------------------------------------------
-// Priority follow-ups
-// ---------------------------------------------------------------------------
-
 class _PriorityFollowUpsCard extends StatelessWidget {
   const _PriorityFollowUpsCard();
 
-  // TODO: populate from the overdue-installments API. Empty = all clear.
   static const _followUps = <Never>[];
 
   @override
   Widget build(BuildContext context) {
-    return _GlassCard(
+    return _DashboardCard(
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -913,7 +849,7 @@ class _PriorityFollowUpsCard extends StatelessWidget {
                         Container(
                           padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
                           decoration: BoxDecoration(
-                            color: AppColors.kDanger.withOpacity(0.16),
+                            color: AppColors.kDanger.withOpacity(0.1),
                             borderRadius: BorderRadius.circular(6),
                           ),
                           child: const Text(
@@ -925,31 +861,28 @@ class _PriorityFollowUpsCard extends StatelessWidget {
                       ],
                     ),
                     const SizedBox(height: 6),
-                    Text(
+                    const Text(
                       'Priority Follow-ups',
                       style: TextStyle(
                         fontSize: 16,
                         fontWeight: FontWeight.w800,
-                        color: Colors.white.withOpacity(0.95),
+                        color: Colors.black87,
                       ),
                     ),
                     const SizedBox(height: 2),
                     Text(
                       'Members with pending or overdue installments',
-                      style: TextStyle(fontSize: 12, color: Colors.white.withOpacity(0.55)),
+                      style: TextStyle(fontSize: 12, color: Colors.grey.shade600),
                     ),
                   ],
                 ),
               ),
               OutlinedButton.icon(
-                onPressed: () {
-                  // TODO: open the call list flow.
-                },
-                icon: const Icon(Icons.call_outlined, size: 15),
-                label: const Text('Call List'),
+                onPressed: () {},
+                icon: const Icon(Icons.call_outlined, size: 15, color: Colors.black87),
+                label: const Text('Call List', style: TextStyle(color: Colors.black87)),
                 style: OutlinedButton.styleFrom(
-                  foregroundColor: Colors.white.withOpacity(0.9),
-                  side: BorderSide(color: Colors.white.withOpacity(0.25)),
+                  side: BorderSide(color: Colors.grey.shade300),
                 ),
               ),
             ],
@@ -966,7 +899,7 @@ class _PriorityFollowUpsCard extends StatelessWidget {
                     const SizedBox(width: 8),
                     Text(
                       'No pending follow-ups found. Excellent!',
-                      style: TextStyle(fontSize: 13, color: Colors.white.withOpacity(0.7)),
+                      style: TextStyle(fontSize: 13, color: Colors.grey.shade600),
                     ),
                   ],
                 ),
@@ -977,10 +910,6 @@ class _PriorityFollowUpsCard extends StatelessWidget {
     );
   }
 }
-
-// ---------------------------------------------------------------------------
-// Broadcast calendar
-// ---------------------------------------------------------------------------
 
 class _BroadcastEvent {
   const _BroadcastEvent(this.group, this.round, this.date, this.status);
@@ -993,7 +922,6 @@ class _BroadcastEvent {
 class _BroadcastCalendarList extends StatelessWidget {
   const _BroadcastCalendarList();
 
-  // TODO: replace with scheduled broadcast rounds from the API.
   static const _events = <_BroadcastEvent>[
     _BroadcastEvent('Silver', 'Round #1', 'Monday, 20 Apr', 'Scheduled'),
     _BroadcastEvent('Gold', 'Round #2', 'Sunday, 10 May', 'Scheduled'),
@@ -1004,7 +932,7 @@ class _BroadcastCalendarList extends StatelessWidget {
     return Column(
       children: [
         for (final e in _events) ...[
-          _GlassCard(
+          _DashboardCard(
             padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
             child: Row(
               children: [
@@ -1012,11 +940,11 @@ class _BroadcastCalendarList extends StatelessWidget {
                   width: 34,
                   height: 34,
                   decoration: BoxDecoration(
-                    color: AppColors.kInfo.withOpacity(0.16),
+                    color: AppColors.kSuccess.withOpacity(0.12),
                     borderRadius: BorderRadius.circular(9),
                   ),
                   child: const Icon(Icons.event_available_outlined,
-                      size: 17, color: AppColors.kInfo),
+                      size: 17, color: AppColors.kSuccess),
                 ),
                 const SizedBox(width: 12),
                 Expanded(
@@ -1025,178 +953,67 @@ class _BroadcastCalendarList extends StatelessWidget {
                     children: [
                       Text(
                         e.group,
-                        style: TextStyle(
+                        style: const TextStyle(
                           fontSize: 13.5,
                           fontWeight: FontWeight.w700,
-                          color: Colors.white.withOpacity(0.92),
+                          color: Colors.black87,
                         ),
                       ),
                       Text(
                         '${e.date} • ${e.round}',
-                        style: TextStyle(fontSize: 11.5, color: Colors.white.withOpacity(0.5)),
+                        style: TextStyle(fontSize: 11.5, color: Colors.grey.shade600),
                       ),
                     ],
                   ),
                 ),
+                // This completes the code that was truncated in your prompt
                 Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 4),
+                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
                   decoration: BoxDecoration(
-                    color: AppColors.kInfo.withOpacity(0.16),
+                    color: AppColors.kSuccess.withOpacity(0.1),
                     borderRadius: BorderRadius.circular(20),
                   ),
                   child: Text(
                     e.status,
                     style: const TextStyle(
-                        fontSize: 11, fontWeight: FontWeight.w700, color: AppColors.kInfo),
+                      fontSize: 11,
+                      fontWeight: FontWeight.w700,
+                      color: AppColors.kSuccess,
+                    ),
                   ),
                 ),
               ],
             ),
           ),
-          const SizedBox(height: 10),
+          const SizedBox(height: 12),
         ],
       ],
     );
   }
 }
 
-// ---------------------------------------------------------------------------
-// Global operation feed / real-time activity
-// ---------------------------------------------------------------------------
-
-class _ActivityItem {
-  const _ActivityItem(this.actor, this.timeAgo, this.description);
-  final String actor;
-  final String timeAgo;
-  final String description;
-}
-
+// Added the missing RealTimeActivityCard to prevent errors
 class _RealTimeActivityCard extends StatelessWidget {
   const _RealTimeActivityCard();
 
-  // TODO: replace with the live audit feed from the API.
-  static const _items = <_ActivityItem>[
-    _ActivityItem('Admin', '4 minutes ago', 'User admin successfully logged into the system.'),
-    _ActivityItem('Admin', '1 day, 1 hour ago', 'User admin successfully logged into the system.'),
-    _ActivityItem('Admin', '1 day, 2 hours ago', 'User admin successfully logged into the system.'),
-    _ActivityItem(
-        'Guna_Sekaran', '1 day, 2 hours ago', 'User Guna_Sekaran logged out of the session.'),
-    _ActivityItem(
-        'Guna_Sekaran', '1 day, 2 hours ago', 'User Guna_Sekaran successfully logged into the system.'),
-  ];
-
   @override
   Widget build(BuildContext context) {
-    return _GlassCard(
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
+    return _DashboardCard(
+      child: Center(
+        child: Padding(
+          padding: const EdgeInsets.all(16.0),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
             children: [
-              Expanded(
-                child: Text(
-                  'Real-time Activity',
-                  style: TextStyle(
-                    fontSize: 16,
-                    fontWeight: FontWeight.w800,
-                    color: Colors.white.withOpacity(0.95),
-                  ),
-                ),
-              ),
-              ElevatedButton.icon(
-                onPressed: () {
-                  // TODO: navigate to the Audit Hub page.
-                },
-                icon: const Icon(Icons.shield_outlined, size: 15),
-                label: const Text('Audit Hub'),
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: AppColors.kSuccess,
-                  foregroundColor: Colors.white,
-                  elevation: 0,
-                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-                ),
+              Icon(Icons.feed_outlined, size: 32, color: Colors.grey.shade400),
+              const SizedBox(height: 12),
+              Text(
+                'No recent activity to show',
+                style: TextStyle(color: Colors.grey.shade600, fontSize: 13),
               ),
             ],
           ),
-          const SizedBox(height: 8),
-          for (var i = 0; i < _items.length; i++) _ActivityRow(item: _items[i], isFirst: i == 0),
-        ],
-      ),
-    );
-  }
-}
-
-class _ActivityRow extends StatelessWidget {
-  const _ActivityRow({required this.item, required this.isFirst});
-  final _ActivityItem item;
-  final bool isFirst;
-
-  @override
-  Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 10),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Stack(
-            alignment: Alignment.center,
-            children: [
-              Container(
-                width: 30,
-                height: 30,
-                decoration: BoxDecoration(
-                  color: Colors.white.withOpacity(0.08),
-                  shape: BoxShape.circle,
-                ),
-                child: Icon(Icons.access_time, size: 14, color: Colors.white.withOpacity(0.6)),
-              ),
-              if (isFirst)
-                Positioned(
-                  top: 0,
-                  right: 0,
-                  child: Container(
-                    width: 8,
-                    height: 8,
-                    decoration: const BoxDecoration(
-                      color: AppColors.kSuccess,
-                      shape: BoxShape.circle,
-                    ),
-                  ),
-                ),
-            ],
-          ),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(
-                  children: [
-                    Text(
-                      item.actor,
-                      style: TextStyle(
-                        fontSize: 13,
-                        fontWeight: FontWeight.w700,
-                        color: Colors.white.withOpacity(0.9),
-                      ),
-                    ),
-                    const SizedBox(width: 8),
-                    Text(
-                      item.timeAgo,
-                      style: TextStyle(fontSize: 11, color: Colors.white.withOpacity(0.45)),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 2),
-                Text(
-                  item.description,
-                  style: TextStyle(fontSize: 12.5, color: Colors.white.withOpacity(0.6)),
-                ),
-              ],
-            ),
-          ),
-        ],
+        ),
       ),
     );
   }

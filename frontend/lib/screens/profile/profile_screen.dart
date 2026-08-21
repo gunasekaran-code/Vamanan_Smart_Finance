@@ -186,93 +186,135 @@ class _ProfileScreenState extends State<ProfileScreen> {
     return AppPage(
       title: 'My Profile',
       children: [
-        // Minimalist Green & White Profile Header Card
+        // -------------------------------------------------------------
+        // TOP PROFILE HEADER CARD
+        // -------------------------------------------------------------
         Container(
-          padding: const EdgeInsets.all(18),
+          width: double.infinity,
+          padding: const EdgeInsets.symmetric(vertical: 24, horizontal: 16),
           decoration: BoxDecoration(
             color: AppColors.kSurface,
-            borderRadius: BorderRadius.circular(16),
-            border: Border.all(color: AppColors.kBorder),
+            borderRadius: BorderRadius.circular(20),
+            border: Border.all(color: AppColors.kBorder.withOpacity(0.5)),
             boxShadow: [
               BoxShadow(
                 color: Colors.black.withOpacity(0.02),
-                blurRadius: 8,
-                offset: const Offset(0, 2),
+                blurRadius: 10,
+                offset: const Offset(0, 4),
               ),
             ],
           ),
           child: Column(
             children: [
-              Row(
-                children: [
-                  // Clickable Avatar with Camera Badge
-                  GestureDetector(
-                    onTap: () => _showImagePickerModal(context),
-                    child: Stack(
-                      children: [
-                        CircleAvatar(
-                          radius: 30,
-                          backgroundColor: AppColors.kPrimary,
-                          child: Text(
-                            user.initials,
-                            style: const TextStyle(
-                              color: Colors.white,
-                              fontWeight: FontWeight.bold,
-                              fontSize: 18,
-                            ),
+              // Avatar with Crown Accent Ring & Camera Badge
+              GestureDetector(
+                onTap: () => _showImagePickerModal(context),
+                child: Stack(
+                  children: [
+                    Container(
+                      padding: const EdgeInsets.all(4),
+                      decoration: BoxDecoration(
+                        shape: BoxShape.circle,
+                        border: Border.all(color: const Color(0xFFD4AF37), width: 2), // Gold ring accent
+                      ),
+                      child: CircleAvatar(
+                        radius: 42,
+                        backgroundColor: AppColors.kPrimary,
+                        child: Text(
+                          user.initials,
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontWeight: FontWeight.bold,
+                            fontSize: 24,
                           ),
                         ),
-                        Positioned(
-                          bottom: 0,
-                          right: 0,
-                          child: Container(
-                            padding: const EdgeInsets.all(3),
-                            decoration: const BoxDecoration(
-                              color: AppColors.kSurface,
-                              shape: BoxShape.circle,
+                      ),
+                    ),
+                    Positioned(
+                      bottom: 2,
+                      right: 2,
+                      child: Container(
+                        padding: const EdgeInsets.all(4),
+                        decoration: BoxDecoration(
+                          color: Colors.white,
+                          shape: BoxShape.circle,
+                          boxShadow: [
+                            BoxShadow(
+                              color: Colors.black.withOpacity(0.15),
+                              blurRadius: 4,
                             ),
-                            child: const CircleAvatar(
-                              radius: 9,
-                              backgroundColor: AppColors.kPrimary,
-                              child: Icon(Icons.camera_alt, size: 10, color: Colors.white),
-                            ),
+                          ],
+                        ),
+                        child: const Icon(
+                          Icons.camera_alt,
+                          size: 14,
+                          color: AppColors.kPrimary,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 12),
+
+              // Name
+              Text(
+                user.name,
+                style: const TextStyle(
+                  fontSize: 22,
+                  fontWeight: FontWeight.bold,
+                  color: AppColors.kTextDark,
+                ),
+              ),
+              const SizedBox(height: 10),
+
+              // Status Chips (SUPERADMIN & VERIFIED ACCOUNT)
+              Wrap(
+                alignment: WrapAlignment.center,
+                spacing: 8,
+                runSpacing: 8,
+                children: [
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFEDE7F6), // Light violet
+                      borderRadius: BorderRadius.circular(20),
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        const Icon(Icons.shield_outlined, size: 13, color: Color(0xFF673AB7)),
+                        const SizedBox(width: 4),
+                        Text(
+                          user.role.label.toUpperCase(),
+                          style: const TextStyle(
+                            color: Color(0xFF673AB7),
+                            fontSize: 11,
+                            fontWeight: FontWeight.bold,
+                            letterSpacing: 0.5,
                           ),
                         ),
                       ],
                     ),
                   ),
-                  const SizedBox(width: 14),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFE8F5E9), // Light green
+                      borderRadius: BorderRadius.circular(20),
+                    ),
+                    child: const Row(
+                      mainAxisSize: MainAxisSize.min,
                       children: [
+                        Icon(Icons.check_circle, size: 13, color: Color(0xFF2E7D32)),
+                        SizedBox(width: 4),
                         Text(
-                          user.name,
-                          style: const TextStyle(
-                            fontWeight: FontWeight.w700,
-                            fontSize: 16,
-                            color: AppColors.kTextDark,
-                          ),
-                        ),
-                        const SizedBox(height: 2),
-                        Text(
-                          user.email,
-                          style: const TextStyle(color: AppColors.kTextMuted, fontSize: 13),
-                        ),
-                        const SizedBox(height: 8),
-                        Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 3),
-                          decoration: BoxDecoration(
-                            color: AppColors.kPrimaryLight,
-                            borderRadius: BorderRadius.circular(20),
-                          ),
-                          child: Text(
-                            user.role.label,
-                            style: const TextStyle(
-                              color: AppColors.kPrimary,
-                              fontSize: 11,
-                              fontWeight: FontWeight.bold,
-                            ),
+                          'VERIFIED ACCOUNT',
+                          style: TextStyle(
+                            color: Color(0xFF2E7D32),
+                            fontSize: 11,
+                            fontWeight: FontWeight.bold,
+                            letterSpacing: 0.5,
                           ),
                         ),
                       ],
@@ -280,22 +322,334 @@ class _ProfileScreenState extends State<ProfileScreen> {
                   ),
                 ],
               ),
+              const SizedBox(height: 10),
+
+              // Joined Date Pill
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 4),
+                decoration: BoxDecoration(
+                  color: AppColors.kBorder.withOpacity(0.2),
+                  borderRadius: BorderRadius.circular(20),
+                ),
+                child: const Text(
+                  'Joined Apr 2026',
+                  style: TextStyle(
+                    fontSize: 12,
+                    color: AppColors.kTextMuted,
+                    fontWeight: FontWeight.w500,
+                  ),
+                ),
+              ),
+              const SizedBox(height: 14),
+
+              // Email & UID info row
+              Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  const Icon(Icons.email_outlined, size: 14, color: AppColors.kTextMuted),
+                  const SizedBox(width: 4),
+                  Text(
+                    user.email,
+                    style: const TextStyle(fontSize: 13, color: AppColors.kTextMuted),
+                  ),
+                  const SizedBox(width: 12),
+                  const Icon(Icons.badge_outlined, size: 14, color: AppColors.kTextMuted),
+                  const SizedBox(width: 4),
+                  const Text(
+                    'UID: 0001',
+                    style: TextStyle(fontSize: 13, color: AppColors.kTextMuted),
+                  ),
+                ],
+              ),
               const SizedBox(height: 16),
-              const Divider(height: 1),
+
+              // Edit Profile Button
+              OutlinedButton.icon(
+                onPressed: () => _showEditProfileDialog(context, user),
+                icon: const Icon(Icons.edit_outlined, size: 15),
+                label: const Text('Edit Profile'),
+                style: OutlinedButton.styleFrom(
+                  foregroundColor: AppColors.kTextDark,
+                  side: BorderSide(color: AppColors.kBorder.withOpacity(0.8)),
+                  backgroundColor: Colors.white,
+                  padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                  elevation: 0,
+                ),
+              ),
+            ],
+          ),
+        ),
+
+        const SizedBox(height: 20),
+
+        // -------------------------------------------------------------
+        // ACCOUNT IDENTITY CARD
+        // -------------------------------------------------------------
+        Container(
+          width: double.infinity,
+          padding: const EdgeInsets.all(20),
+          decoration: BoxDecoration(
+            color: AppColors.kSurface,
+            borderRadius: BorderRadius.circular(20),
+            border: Border.all(color: AppColors.kBorder.withOpacity(0.5)),
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Row(
+                children: [
+                  Icon(Icons.person_pin_outlined, color: AppColors.kPrimary, size: 22),
+                  SizedBox(width: 8),
+                  Text(
+                    'Account Identity',
+                    style: TextStyle(
+                      fontSize: 18,
+                      fontWeight: FontWeight.bold,
+                      color: AppColors.kTextDark,
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 16),
+
+              // OFFICIAL USERNAME
+              const Text(
+                'OFFICIAL USERNAME',
+                style: TextStyle(
+                  fontSize: 11,
+                  fontWeight: FontWeight.w600,
+                  color: AppColors.kTextMuted,
+                  letterSpacing: 0.5,
+                ),
+              ),
+              const SizedBox(height: 4),
+              Text(
+                '@${user.name.toLowerCase().replaceAll(' ', '')}',
+                style: const TextStyle(
+                  fontSize: 15,
+                  fontWeight: FontWeight.bold,
+                  color: AppColors.kTextDark,
+                ),
+              ),
+              const SizedBox(height: 16),
+
+              // LOGIN CREDENTIAL
+              const Text(
+                'LOGIN CREDENTIAL',
+                style: TextStyle(
+                  fontSize: 11,
+                  fontWeight: FontWeight.w600,
+                  color: AppColors.kTextMuted,
+                  letterSpacing: 0.5,
+                ),
+              ),
+              const SizedBox(height: 4),
+              Text(
+                user.email,
+                style: const TextStyle(
+                  fontSize: 15,
+                  fontWeight: FontWeight.bold,
+                  color: AppColors.kTextDark,
+                ),
+              ),
+              const SizedBox(height: 16),
+
+              // PASSWORD STATUS
+              const Text(
+                'PASSWORD STATUS',
+                style: TextStyle(
+                  fontSize: 11,
+                  fontWeight: FontWeight.w600,
+                  color: AppColors.kTextMuted,
+                  letterSpacing: 0.5,
+                ),
+              ),
+              const SizedBox(height: 4),
+              const Row(
+                children: [
+                  Icon(Icons.check_circle, size: 16, color: Color(0xFF2E7D32)),
+                  SizedBox(width: 6),
+                  Text(
+                    'Encrypted & Secured',
+                    style: TextStyle(
+                      fontSize: 14,
+                      fontWeight: FontWeight.bold,
+                      color: Color(0xFF2E7D32),
+                    ),
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ),
+
+        const SizedBox(height: 20),
+
+        // -------------------------------------------------------------
+        // UNIFIED PORTFOLIO CONTEXT CARD
+        // -------------------------------------------------------------
+        Container(
+          width: double.infinity,
+          padding: const EdgeInsets.all(20),
+          decoration: BoxDecoration(
+            color: AppColors.kSurface,
+            borderRadius: BorderRadius.circular(20),
+            border: Border.all(color: AppColors.kBorder.withOpacity(0.5)),
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Row(
+                children: [
+                  Icon(Icons.grid_view_rounded, color: AppColors.kTextDark, size: 20),
+                  SizedBox(width: 8),
+                  Text(
+                    'Unified Portfolio Context',
+                    style: TextStyle(
+                      fontSize: 18,
+                      fontWeight: FontWeight.bold,
+                      color: AppColors.kTextDark,
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 16),
+
+              // Chit Fund Member Block
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.all(16),
+                decoration: BoxDecoration(
+                  color: const Color(0xFFF4F9F5),
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        Container(
+                          padding: const EdgeInsets.all(6),
+                          decoration: BoxDecoration(
+                            color: Colors.white,
+                            borderRadius: BorderRadius.circular(8),
+                          ),
+                          child: const Icon(Icons.savings_outlined, color: Color(0xFF2E7D32), size: 20),
+                        ),
+                        const SizedBox(width: 12),
+                        const Text(
+                          'Chit Fund Member',
+                          style: TextStyle(
+                            fontSize: 15,
+                            fontWeight: FontWeight.bold,
+                            color: AppColors.kTextDark,
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 12),
+                    const Text(
+                      'No active chit membership',
+                      style: TextStyle(fontSize: 13, color: AppColors.kTextMuted),
+                    ),
+                  ],
+                ),
+              ),
               const SizedBox(height: 12),
 
-              // Edit Profile Action Trigger
+              // Loan Portfolio Block
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.all(16),
+                decoration: BoxDecoration(
+                  color: const Color(0xFFF8F7FF),
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        Container(
+                          padding: const EdgeInsets.all(6),
+                          decoration: BoxDecoration(
+                            color: Colors.white,
+                            borderRadius: BorderRadius.circular(8),
+                          ),
+                          child: const Icon(Icons.account_balance_outlined, color: Color(0xFF5C6BC0), size: 20),
+                        ),
+                        const SizedBox(width: 12),
+                        const Text(
+                          'Loan Portfolio',
+                          style: TextStyle(
+                            fontSize: 15,
+                            fontWeight: FontWeight.bold,
+                            color: AppColors.kTextDark,
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 12),
+                    const Text(
+                      'No linked member profile',
+                      style: TextStyle(fontSize: 13, color: AppColors.kTextMuted),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 16),
+              const Divider(height: 1),
+              const SizedBox(height: 16),
+
+              // Access Recovery & Security Button
               SizedBox(
                 width: double.infinity,
-                child: OutlinedButton.icon(
-                  onPressed: () => _showEditProfileDialog(context, user),
-                  icon: const Icon(Icons.edit_outlined, size: 16),
-                  label: const Text('Edit Profile Details'),
-                  style: OutlinedButton.styleFrom(
-                    foregroundColor: AppColors.kPrimary,
-                    side: const BorderSide(color: AppColors.kPrimaryLight),
-                    backgroundColor: AppColors.kPrimaryLight.withOpacity(0.3),
-                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                child: TextButton.icon(
+                  style: TextButton.styleFrom(
+                    backgroundColor: const Color(0xFFF5F5F7),
+                    foregroundColor: AppColors.kTextDark,
+                    padding: const EdgeInsets.symmetric(vertical: 14),
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                  ),
+                  onPressed: () {
+                    ToastService.show(
+                      title: 'Security',
+                      message: 'Accessing recovery options...',
+                      type: ToastType.info,
+                    );
+                  },
+                  icon: const Icon(Icons.vpn_key_outlined, size: 18),
+                  label: const Text(
+                    'Access Recovery & Security',
+                    style: TextStyle(fontWeight: FontWeight.w600, fontSize: 13),
+                  ),
+                ),
+              ),
+              const SizedBox(height: 12),
+
+              // System Exit Button
+              SizedBox(
+                width: double.infinity,
+                child: TextButton.icon(
+                  style: TextButton.styleFrom(
+                    foregroundColor: AppColors.kDanger,
+                    padding: const EdgeInsets.symmetric(vertical: 12),
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                  ),
+                  onPressed: () {
+                    SessionService.instance.logout();
+                    ToastService.show(
+                      title: 'Signed Out',
+                      message: 'You have been signed out successfully.',
+                      type: ToastType.info,
+                    );
+                    context.go(AppRoutes.login);
+                  },
+                  icon: const Icon(Icons.logout, size: 16, color: AppColors.kDanger),
+                  label: const Text(
+                    'System Exit',
+                    style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
                   ),
                 ),
               ),
@@ -304,6 +658,10 @@ class _ProfileScreenState extends State<ProfileScreen> {
         ),
 
         const SizedBox(height: 24),
+
+        // -------------------------------------------------------------
+        // SWITCH DEMO ROLE (DEV HELPER)
+        // -------------------------------------------------------------
         const Text('Switch Demo Role', style: TextStyle(fontWeight: FontWeight.w700, fontSize: 15)),
         const SizedBox(height: 4),
         const Text(
@@ -338,30 +696,6 @@ class _ProfileScreenState extends State<ProfileScreen> {
                 },
               ),
           ],
-        ),
-
-        const SizedBox(height: 28),
-        SizedBox(
-          width: double.infinity,
-          child: OutlinedButton.icon(
-            style: OutlinedButton.styleFrom(
-              foregroundColor: AppColors.kDanger,
-              side: const BorderSide(color: AppColors.kDanger),
-              padding: const EdgeInsets.symmetric(vertical: 12),
-              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-            ),
-            onPressed: () {
-              SessionService.instance.logout();
-              ToastService.show(
-                title: 'Signed Out',
-                message: 'You have been signed out successfully.',
-                type: ToastType.info,
-              );
-              context.go(AppRoutes.login);
-            },
-            icon: const Icon(Icons.logout),
-            label: const Text('Sign Out'),
-          ),
         ),
       ],
     );

@@ -23,6 +23,7 @@ class AppRoutes {
   // CHIT OPERATIONS
 
   static const String chits = '/chits';
+  static const String golddash = 'GoldDash';
   static const String auctions = '/auctions';
   static const String settlements = '/settlements';
   static const String branchHandovers = '/branch-handovers';
