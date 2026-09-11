@@ -1,19 +1,19 @@
 import 'package:flutter/material.dart';
 
-import 'routes/app_router.dart';
-import 'theme/app_theme.dart';
+import 'package:frontend/core/routing/app_router.dart';
+import 'package:frontend/core/theme/app_theme.dart';
 
 void main() {
-  runApp(const SmartFinanceApp());
+  runApp(const VamananGoldApp());
 }
 
-class SmartFinanceApp extends StatelessWidget {
-  const SmartFinanceApp({super.key});
+class VamananGoldApp extends StatelessWidget {
+  const VamananGoldApp({super.key});
 
   @override
   Widget build(BuildContext context) {
     return MaterialApp.router(
-      title: 'SmartFinance',
+      title: 'Vamanan Enterprises V | Vamanan Gold',
       debugShowCheckedModeBanner: false,
       theme: AppTheme.light,
       routerConfig: AppRouter.router,

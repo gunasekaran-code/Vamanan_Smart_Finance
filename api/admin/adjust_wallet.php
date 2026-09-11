@@ -1,0 +1,109 @@
+<?php
+// api/admin/adjust_wallet.php
+
+error_reporting(0);
+ini_set('display_errors', 0);
+
+header("Access-Control-Allow-Origin: *");
+header("Content-Type: application/json; charset=UTF-8");
+header("Access-Control-Allow-Methods: POST, OPTIONS");
+header("Access-Control-Allow-Headers: Content-Type");
+
+if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
+    http_response_code(200);
+    exit;
+}
+
+try {
+    require_once '../config/db.php';
+    require_once '../models/Wallet.php';
+
+    $database = new Database();
+    $db = $database->getConnection();
+    if (!$db) throw new Exception("Database connection failed");
+
+    $data = json_decode(file_get_contents("php://input"));
+
+    if(!empty($data->user_id) && !empty($data->amount) && !empty($data->type)) {
+        $db->beginTransaction();
+
+        $userId = $data->user_id;
+        $amount = (float)$data->amount;              // NET amount actually credited/debited to the wallet
+        $type   = $data->type;
+        $reason = $data->reason ?? 'System adjustment';
+        $category = $data->category ?? 'purchase';
+
+        // Optional deduction breakdown (sent when applying a net daily payout, so the
+        // ledger records gross / TDS / charges just like the automated yield engine).
+        $grossAmount   = isset($data->gross_amount)   ? (float)$data->gross_amount   : null;
+        $tdsAmount     = isset($data->tds_amount)     ? (float)$data->tds_amount     : null;
+        $chargesAmount = isset($data->charges_amount) ? (float)$data->charges_amount : null;
+        $deduction     = isset($data->deduction)      ? (float)$data->deduction
+                          : (($tdsAmount !== null || $chargesAmount !== null) ? (float)$tdsAmount + (float)$chargesAmount : null);
+
+        // 1. Get Wallet ID
+        $stmt = $db->prepare("SELECT id FROM wallets WHERE user_id = ?");
+        $stmt->execute([$userId]);
+        $wallet = $stmt->fetch(PDO::FETCH_ASSOC);
+
+        if(!$wallet) throw new Exception("Wallet not found for this user.");
+
+        // 2. Cashback Cycle Detection
+        // Now using explicit category from frontend
+        $isCashbackPayout = ($category === 'cashback' || ($type === 'credit' && (stripos($reason, 'cashback') !== false || stripos($reason, 'daily') !== false)));
+        
+        if ($isCashbackPayout) {
+            $category = 'cashback';
+            
+            // Update cycle if exists
+            $cStmt = $db->prepare("SELECT * FROM cashback_cycles WHERE user_id = ? AND status = 'active' ORDER BY created_at ASC LIMIT 1");
+            $cStmt->execute([$userId]);
+            $cycle = $cStmt->fetch(PDO::FETCH_ASSOC);
+
+            if ($cycle) {
+                // Cycle accrues the GROSS amount (matches the yield engine's cap math);
+                // fall back to the credited amount when no gross breakdown was supplied.
+                $cycleAccrual = ($grossAmount !== null) ? $grossAmount : $amount;
+                $cap = (float)($cycle['cashback_eligible_amount'] ?? 0);
+                if ($cap <= 0) $cap = (float)$cycle['total_value'];
+
+                // Monthly plan: days_paid repurposed as installments; complete at plan months or 100% cap.
+                $planMonths = max(1, (int)($db->query("SELECT config_value FROM platform_settings WHERE config_key = 'plan_duration_months'")->fetchColumn() ?: 10));
+                $newDays = (int)$cycle['days_paid'] + 1;
+                $newEarned = (float)$cycle['paid_amount'] + $cycleAccrual;
+                $newStatus = ($newEarned >= $cap || $newDays >= $planMonths) ? 'completed' : 'active';
+
+                $upStmt = $db->prepare("UPDATE cashback_cycles SET days_paid = ?, paid_amount = ?, status = ?, last_paid_at = CURDATE() WHERE id = ?");
+                $upStmt->execute([$newDays, $newEarned, $newStatus, $cycle['id']]);
+            }
+        }
+
+        // 3. Update Balance
+        $adjustmentAmount = ($type === 'debit') ? -$amount : $amount;
+        $earnedIncrement = ($type === 'credit') ? $amount : 0;
+        
+        $db->prepare("UPDATE wallets SET balance = balance + ?, total_earned = total_earned + ? WHERE id = ?")
+           ->execute([$adjustmentAmount, $earnedIncrement, $wallet['id']]);
+
+        // 4. Log Transaction (with optional gross / TDS / charges breakdown)
+        $db->prepare("INSERT INTO transactions (wallet_id, type, category, amount, gross_amount, tds_amount, charges_amount, deduction, description, status)
+                      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'completed')")
+           ->execute([$wallet['id'], $type, $category, $amount, $grossAmount, $tdsAmount, $chargesAmount, $deduction, "MANUAL: " . $reason]);
+
+        $db->commit();
+        echo json_encode(["status" => "success", "message" => "Adjustment completed successfully"]);
+
+    } else {
+        throw new Exception("Missing required fields (user_id, amount, type)");
+    }
+
+} catch (Exception $e) {
+    if (isset($db) && $db->inTransaction()) $db->rollBack();
+    echo json_encode([
+        "status" => "error", 
+        "message" => "Adjustment failed: " . $e->getMessage(),
+        "file" => basename($e->getFile()),
+        "line" => $e->getLine()
+    ]);
+}
+?>

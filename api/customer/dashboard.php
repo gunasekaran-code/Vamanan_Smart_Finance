@@ -1,0 +1,223 @@
+<?php
+// api/customer/dashboard.php
+header("Access-Control-Allow-Origin: *");
+header("Content-Type: application/json; charset=UTF-8");
+
+require_once __DIR__ . '/../config.php';
+require_once __DIR__ . '/../models/Wallet.php';
+require_once __DIR__ . '/../cron/daily_yield_engine.php';
+$db = $pdo;
+$walletModel = new Wallet($db);
+
+// Lazy daily cron: auto-credit today's cashback (once per day, for everyone)
+// when a customer opens their dashboard. Never throws.
+maybe_run_daily_yield($db);
+
+$userId = isset($_GET['user_id']) ? $_GET['user_id'] : null;
+
+if(!$userId) {
+    echo json_encode(["status" => "error", "message" => "User ID required"]);
+    exit;
+}
+
+try {
+    // 1. Fetch User Info
+    $uStmt = $db->prepare("SELECT name, email, kyc_status, customer_id, referral_code FROM users WHERE id = ?");
+    $uStmt->execute([$userId]);
+    $user = $uStmt->fetch(PDO::FETCH_ASSOC);
+
+    // 2. Wallet Balance & Transactions
+    $balanceData = $walletModel->getBalance($userId);
+    $transactions = $walletModel->getTransactions($userId);
+
+    // 3. Cashback Cycles — fetch with real-time asset data
+    $cStmt = $db->prepare("SELECT * FROM cashback_cycles WHERE user_id = ? ORDER BY created_at DESC");
+    $cStmt->execute([$userId]);
+    $cycles = $cStmt->fetchAll(PDO::FETCH_ASSOC);
+
+    $totalInvestment    = 0;   // total paid (incl. GST)
+    $totalEligible      = 0;   // GST-excluded product value — the cashback base
+    $totalGst           = 0;
+    $totalEarned        = 0;
+    $totalDailyPayout   = 0;
+    $activeCyclesCount  = 0;
+    $daysCompleted      = 0;
+    // Monthly plan duration (installments) — days_paid is repurposed as months paid.
+    $planMonths = (int)($db->query("SELECT config_value FROM platform_settings WHERE config_key = 'plan_duration_months'")->fetchColumn() ?: 10);
+    if ($planMonths < 1) $planMonths = 10;
+    $daysRemaining      = $planMonths;
+    $activeCycle        = null;
+
+    foreach ($cycles as $cycle) {
+        if (in_array($cycle['status'], ['active', 'pending', 'completed'], true)) {
+            // GST-exclusive: cashback progress is measured against the product subtotal, not the GST-inclusive total.
+            $eligible = (float)($cycle['cashback_eligible_amount'] ?? 0);
+            if ($eligible <= 0) $eligible = (float)$cycle['total_value']; // legacy rows (GST was 0)
+
+            $totalInvestment += (float)$cycle['total_value'];
+            $totalEligible   += $eligible;
+            $totalGst        += (float)($cycle['gst_amount'] ?? 0);
+            $totalEarned     += (float)($cycle['paid_amount'] ?? 0);
+
+            if ($cycle['status'] === 'active') {
+                $totalDailyPayout += (float)($cycle['daily_payout'] ?? 0);
+                $activeCyclesCount++;
+            }
+
+            if (!$activeCycle && $cycle['status'] !== 'completed') {
+                $activeCycle   = $cycle;
+                $daysCompleted = (int)($cycle['days_paid'] ?? 0);
+                $daysRemaining = max(0, $planMonths - $daysCompleted);
+            }
+        }
+    }
+
+    if (!$activeCycle && count($cycles) > 0) {
+        $activeCycle   = $cycles[0];
+        $daysCompleted = (int)($activeCycle['days_paid'] ?? 0);
+        $daysRemaining = max(0, $planMonths - $daysCompleted);
+    }
+
+    // Monthly rate = monthly installment / ex-GST eligible base (≈ 100/planMonths, e.g. 10%).
+    $activeEligibleBase = $activeCycle ? ((float)($activeCycle['cashback_eligible_amount'] ?? 0) ?: (float)($activeCycle['total_value'] ?? 0)) : 0;
+    $dailyRate = $activeEligibleBase > 0
+        ? round((float)($activeCycle['daily_payout'] ?? 0) / $activeEligibleBase * 100, 2)
+        : round(100 / $planMonths, 2);
+
+    // ── Deduction rates (same source as the yield engine) ──────────────────
+    $rateRows = $db->query("SELECT config_key, config_value FROM platform_settings
+                            WHERE config_key IN ('tds_rate','service_charge_rate','tds_charges_rate')")
+                   ->fetchAll(PDO::FETCH_KEY_PAIR);
+    if (isset($rateRows['tds_rate']) || isset($rateRows['service_charge_rate'])) {
+        $tdsRatePct    = (float)($rateRows['tds_rate'] ?? 0);
+        $chargeRatePct = (float)($rateRows['service_charge_rate'] ?? 0);
+    } else {
+        $tdsRatePct    = (float)($rateRows['tds_charges_rate'] ?? 10);
+        $chargeRatePct = 0.0;
+    }
+    // Expected NET daily payout (gross 1% less TDS + service charges).
+    $dailyTds        = round($totalDailyPayout * $tdsRatePct / 100, 2);
+    $dailyCharges    = round($totalDailyPayout * $chargeRatePct / 100, 2);
+    $dailyDeduction  = round($dailyTds + $dailyCharges, 2);
+    $dailyPayoutNet  = round($totalDailyPayout - $dailyDeduction, 2);
+
+    // ── Realised incentive breakdown (actual credited cashback + referral) ──
+    $incStmt = $db->prepare("
+        SELECT
+            COALESCE(SUM(t.amount), 0)                              AS net,
+            COALESCE(SUM(COALESCE(t.gross_amount, t.amount)), 0)    AS gross,
+            COALESCE(SUM(COALESCE(t.tds_amount, 0)), 0)             AS tds,
+            COALESCE(SUM(COALESCE(t.charges_amount, 0)), 0)         AS charges,
+            COALESCE(SUM(COALESCE(t.deduction, 0)), 0)              AS deduction
+        FROM transactions t
+        JOIN wallets w ON t.wallet_id = w.id
+        WHERE w.user_id = ? AND t.type = 'credit' AND t.category IN ('cashback','referral')
+    ");
+    $incStmt->execute([$userId]);
+    $inc = $incStmt->fetch(PDO::FETCH_ASSOC) ?: [];
+
+    // 4. Referral Stats (Total 5-Level Network)
+    function countNetwork($db, $parentId, $level = 1) {
+        if ($level > 5) return 0;
+        $stmt = $db->prepare("SELECT id FROM users WHERE referrer_id = ?");
+        $stmt->execute([$parentId]);
+        $ids = $stmt->fetchAll(PDO::FETCH_COLUMN);
+        $count = count($ids);
+        foreach ($ids as $id) {
+            $count += countNetwork($db, $id, $level + 1);
+        }
+        return $count;
+    }
+    $referralCount = countNetwork($db, $userId);
+
+    // 5. Active Agreement
+    $aStmt = $db->prepare("SELECT id FROM agreements WHERE user_id = ? ORDER BY created_at DESC LIMIT 1");
+    $aStmt->execute([$userId]);
+    $agreement = $aStmt->fetch(PDO::FETCH_ASSOC);
+
+    // 6. Notifications
+    $nStmt = $db->prepare("SELECT title, message, created_at FROM notifications WHERE user_id IS NULL OR user_id = ? ORDER BY created_at DESC LIMIT 5");
+    $nStmt->execute([$userId]);
+    $notifications = $nStmt->fetchAll(PDO::FETCH_ASSOC);
+
+    // 7. Today's Earning (Daily Cashback)
+    $today = date('Y-m-d');
+    $todayEarning = 0;
+    $totalReferralEarnings = 0;
+
+    foreach($transactions as $tx) {
+        if (isset($tx['category']) && $tx['category'] === 'cashback' && strpos($tx['created_at'], $today) === 0) {
+            $todayEarning += (float)$tx['amount'];
+        }
+        if (isset($tx['category']) && $tx['category'] === 'referral') {
+            $totalReferralEarnings += (float)$tx['amount'];
+        }
+    }
+
+    $combinedEarned = max((float)$totalEarned, (float)($balanceData['total_earned'] ?? 0), (float)($inc['net'] ?? 0));
+
+    echo json_encode([
+        "status" => "success",
+        "data" => [
+            "user"              => $user,
+            "balance"           => $balanceData['balance'] ?? 0.00,
+            "cycles"            => $cycles,
+            "active_cycle"      => [
+                "total_value"        => $totalInvestment,
+                "product_amount"     => $totalEligible,
+                "gst_amount"         => $totalGst,
+                "cashback_eligible"  => $totalEligible,
+                "total_earned"       => $combinedEarned,
+                "remaining_value"    => max(0, $totalEligible - $combinedEarned),
+                "cashback_percentage"=> $totalEligible > 0 ? round(($combinedEarned / $totalEligible) * 100, 2) : 0,
+                "is_closing_soon"    => $daysRemaining <= 10 && $daysRemaining > 0,
+                "days_completed"     => $daysCompleted,
+                "days_remaining"     => $daysRemaining,
+                "daily_payout"       => $totalDailyPayout,       // gross monthly installment (repurposed)
+                "daily_payout_net"   => $dailyPayoutNet,         // net after TDS + charges
+                "daily_tds"          => $dailyTds,
+                "daily_charges"      => $dailyCharges,
+                "daily_deduction"    => $dailyDeduction,
+                "daily_rate"         => $dailyRate,
+                // Monthly-plan aliases (clearer names for the UI).
+                "plan_months"        => $planMonths,
+                "months_completed"   => $daysCompleted,
+                "months_remaining"   => $daysRemaining,
+                "monthly_payout"     => $totalDailyPayout,       // gross monthly installment
+                "monthly_payout_net" => $dailyPayoutNet,         // net monthly installment
+                "monthly_rate"       => $dailyRate,              // % of principal per month (~10)
+                "tds_rate"           => $tdsRatePct,
+                "service_charge_rate"=> $chargeRatePct,
+                "active_plans_count" => $activeCyclesCount,
+                "status"             => $activeCycle ? $activeCycle['status'] : 'none',
+                "asset_type"         => $activeCycle['asset_type'] ?? 'gold',
+                "weight"             => (float)($activeCycle['weight'] ?? 0),
+                "product_name"       => $activeCycle
+                    ? (!empty($activeCycle['product_name'])
+                        ? $activeCycle['product_name']
+                        : ($activeCycle['asset_type'] === 'silver' ? 'Pure Silver Asset' : '22K Gold Asset'))
+                    : 'Investment Portfolio',
+                "today_earning"      => $todayEarning,
+                "total_referral_earned" => $totalReferralEarnings,
+            ],
+            "transactions"      => $transactions,
+            "incentive_breakdown" => [
+                "gross"     => (float)($inc['gross'] ?? 0),
+                "tds"       => (float)($inc['tds'] ?? 0),
+                "charges"   => (float)($inc['charges'] ?? 0),
+                "deduction" => (float)($inc['deduction'] ?? 0),
+                "net"       => (float)($inc['net'] ?? 0),
+            ],
+            "referrals_count"   => $referralCount,
+            "customer_id"       => $user['customer_id'] ?? null,
+            "referral_code"     => $user['referral_code'] ?? null,
+            "agreement_id"      => $agreement['id'] ?? null,
+            "notifications"     => $notifications
+        ]
+    ]);
+
+} catch (Exception $e) {
+    http_response_code(500);
+    echo json_encode(["status" => "error", "message" => $e->getMessage()]);
+}
+?>

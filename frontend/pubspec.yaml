@@ -1,6 +1,6 @@
-name: smartfinance_app
+name: frontend
 description: >
-  SmartFinance — SPA-style Flutter app with a persistent header/nav shell
+  Vamanan Gold by Vamanan Enterprises V — SPA-style Flutter app with a persistent header/nav shell
   and role-based access control (SUPERADMIN, ADMIN, STAFF, CUSTOMER).
 publish_to: 'none'
 version: 1.0.0+1
@@ -11,7 +11,15 @@ environment:
 dependencies:
   flutter:
     sdk: flutter
+  image_picker: ^1.1.2
   cupertino_icons: ^1.0.8
+  intl: ^0.20.2
+
+  # Auth talks to the PHP backend under api/auth/* over plain JSON POSTs,
+  # and the signed-in AppUser is cached locally so a cold start can restore
+  # the session without a round trip.
+  http: ^1.2.2
+  shared_preferences: ^2.3.2
 
   # Drives the SPA-style nested/persistent routing: StatefulShellRoute
   # keeps the header + bottom nav mounted while only the active tab's
@@ -25,3 +33,5 @@ dev_dependencies:
 
 flutter:
   uses-material-design: true
+  assets:
+    - assets/images/logo.png
