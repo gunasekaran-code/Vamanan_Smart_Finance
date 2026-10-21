@@ -5,6 +5,7 @@ import 'package:frontend/core/routing/app_routes.dart';
 import 'package:frontend/core/services/permission_service.dart';
 import 'package:frontend/core/services/session_service.dart';
 import 'package:frontend/core/theme/app_theme.dart';
+import 'package:frontend/shared/widgets/app_loader.dart';
 
 class SplashScreen extends StatefulWidget {
   const SplashScreen({super.key});
@@ -36,7 +37,7 @@ class _SplashScreenState extends State<SplashScreen> {
   Widget build(BuildContext context) {
     return const Scaffold(
       backgroundColor: AppColors.kBackground,
-      body: Center(child: CircularProgressIndicator(color: AppColors.kPrimary)),
+      body: Center(child: AppLoader()),
     );
   }
 }

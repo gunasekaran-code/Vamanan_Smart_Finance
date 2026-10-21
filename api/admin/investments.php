@@ -39,6 +39,14 @@ try {
         if ($rs !== false && $rs !== null && $rs !== '') $dailyRate = (float)$rs;
     } catch (Exception $e) {}
 
+    // Plan length in months — the monthly installment is eligible / plan months
+    // (same formula approve_investment.php stamps on activation).
+    $planMonths = 10;
+    try {
+        $pm = $db->query("SELECT config_value FROM platform_settings WHERE config_key = 'plan_duration_months'")->fetchColumn();
+        if ($pm !== false && (int)$pm > 0) $planMonths = (int)$pm;
+    } catch (Exception $e) {}
+
     // 2. Map and clean data
     foreach ($investments as &$inv) {
         $inv['cycle_id'] = $inv['id'];
@@ -49,6 +57,8 @@ try {
         if ($eligible <= 0) $eligible = (float)($inv['total_value'] ?? 0);
         $inv['cashback_eligible_amount'] = $eligible;
         $inv['daily_payout'] = round($eligible * $dailyRate / 100, 2);
+        $inv['plan_months'] = $planMonths;
+        $inv['monthly_installment'] = round($eligible / $planMonths, 2);
         // Show the actual product the customer bought. Only fall back to a metal label
         // for raw gold/silver investments (which have no stored product_name).
         if ($inv['asset_type'] === 'product') {

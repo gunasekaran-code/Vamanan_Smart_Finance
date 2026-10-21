@@ -1,52 +1,71 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+import 'package:go_router/go_router.dart';
+import 'package:intl/intl.dart';
+
 import 'package:frontend/core/theme/app_theme.dart';
 import 'package:frontend/core/theme/confirm_dialog.dart';
 import 'package:frontend/shared/widgets/app_page.dart';
 import 'package:frontend/shared/widgets/app_toast.dart';
+import '../../models/auditor_wallet_model.dart';
+import '../../services/auditor_wallet_service.dart';
+import 'package:frontend/shared/widgets/app_loader.dart';
 
-// --- Dummy Data Model ---
-class WithdrawalItem {
-  final String id;
-  final double amount;
-  final String bank;
-  final String status;
-  final String date;
-
-  WithdrawalItem({
-    required this.id,
-    required this.amount,
-    required this.bank,
-    required this.status,
-    required this.date,
-  });
-}
-
+/// The disbursement hub — request a withdrawal and see past ones.
+///
+/// Reached from the WITHDRAW MONEY button on [AuditorWalletScreen], and from
+/// the WALLETS > Withdraw History menu entry. Shared by the auditor and
+/// customer roles; both read the same `user_id`-scoped endpoints:
+///   * `customer/wallet.php`            — balance and locked funds
+///   * `admin/withdrawals.php?user_id=` — this user's history only
+///   * `customer/request_withdrawal.php` — the submit
 class AuditorWalletWithdrawScreen extends StatefulWidget {
-  const AuditorWalletWithdrawScreen({super.key});
+  final String userId;
+
+  const AuditorWalletWithdrawScreen({super.key, required this.userId});
 
   @override
-  State<AuditorWalletWithdrawScreen> createState() => _AuditorWalletWithdrawScreenState();
+  State<AuditorWalletWithdrawScreen> createState() =>
+      _AuditorWalletWithdrawScreenState();
 }
 
-class _AuditorWalletWithdrawScreenState extends State<AuditorWalletWithdrawScreen> {
-  // Form Controllers
-  final TextEditingController _amountCtrl = TextEditingController();
-  final TextEditingController _bankNameCtrl = TextEditingController();
-  final TextEditingController _accNumCtrl = TextEditingController();
-  final TextEditingController _ifscCtrl = TextEditingController();
+class _AuditorWalletWithdrawScreenState
+    extends State<AuditorWalletWithdrawScreen> {
+  /// The backend has no minimum of its own; this is the product rule the
+  /// form advertises under the amount field.
+  static const double _minWithdrawal = 100;
 
-  // Explicitly leaving this empty to match the "NO WITHDRAWALS YET" empty state in the image.
-  // Add items here to see the table populate.
-  final List<WithdrawalItem> _withdrawals = []; 
+  static const Color _navy = Color(0xFF1B233A);
+  static const Color _royal = AppColors.kPrimary;
+  static const Color _slate = Color(0xFF94A3B8);
+  static const Color _label = Color(0xFFCBD5E1);
+  static const Color _hairline = Color(0xFFF1F5F9);
 
-  // Exact Colors from your design
-  final Color _navyBlue = const Color(0xFF1B233A);
-  final Color _slateText = const Color(0xFF94A3B8);
-  final Color _lightBg = const Color(0xFFF8FAFC);
-  final Color _lightBorder = const Color(0xFFF1F5F9);
+  final _amountCtrl = TextEditingController();
+  final _bankNameCtrl = TextEditingController();
+  final _accNumCtrl = TextEditingController();
+  final _ifscCtrl = TextEditingController();
+
+  final _currency = NumberFormat('#,##0.##', 'en_IN');
+  final _dateFmt = DateFormat('dd/MM/yyyy');
+
+  WalletOverview _overview = WalletOverview.empty();
+  List<WithdrawalRecord> _withdrawals = [];
+  bool _loading = true;
+  String? _error;
+  bool _submitting = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+    // MAX and the submit button both depend on the typed amount.
+    _amountCtrl.addListener(_onAmountChanged);
+  }
 
   @override
   void dispose() {
+    _amountCtrl.removeListener(_onAmountChanged);
     _amountCtrl.dispose();
     _bankNameCtrl.dispose();
     _accNumCtrl.dispose();
@@ -54,12 +73,81 @@ class _AuditorWalletWithdrawScreenState extends State<AuditorWalletWithdrawScree
     super.dispose();
   }
 
-  // --- ACTIONS ---
-  Future<void> _handleWithdrawRequest() async {
-    if (_amountCtrl.text.isEmpty || _bankNameCtrl.text.isEmpty || _accNumCtrl.text.isEmpty || _ifscCtrl.text.isEmpty) {
+  void _onAmountChanged() => setState(() {});
+
+  Future<void> _load() async {
+    setState(() {
+      _loading = true;
+      _error = null;
+    });
+    try {
+      final overview =
+          await AuditorWalletService.instance.fetchOverview(widget.userId);
+      final withdrawals =
+          await AuditorWalletService.instance.fetchWithdrawals(widget.userId);
+      if (!mounted) return;
+      setState(() {
+        _overview = overview;
+        _withdrawals = withdrawals;
+        _loading = false;
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _error = e.toString();
+        _loading = false;
+      });
+    }
+  }
+
+  String _money(double v) => '₹${_currency.format(v)}';
+
+  double get _typedAmount =>
+      double.tryParse(_amountCtrl.text.trim().replaceAll(',', '')) ?? 0;
+
+  /// Guard the button rather than letting the server reject the request.
+  bool get _canSubmit =>
+      !_submitting &&
+      _overview.balance >= _minWithdrawal &&
+      _typedAmount >= _minWithdrawal &&
+      _typedAmount <= _overview.balance &&
+      _bankNameCtrl.text.trim().isNotEmpty &&
+      _accNumCtrl.text.trim().isNotEmpty &&
+      _ifscCtrl.text.trim().isNotEmpty;
+
+  void _backToWallet() {
+    if (context.canPop()) {
+      context.pop();
+    } else {
+      context.go('/auditor-wallets');
+    }
+  }
+
+  Future<void> _submit() async {
+    final amount = _typedAmount;
+
+    if (amount < _minWithdrawal) {
       ToastService.show(
-        title: 'Validation Error',
-        message: 'Please fill in all bank details and the withdrawal amount.',
+        title: 'Amount too low',
+        message: 'The minimum withdrawal is ${_money(_minWithdrawal)}.',
+        type: ToastType.warning,
+      );
+      return;
+    }
+    if (amount > _overview.balance) {
+      ToastService.show(
+        title: 'Insufficient balance',
+        message: 'That exceeds your available ${_money(_overview.balance)}.',
+        type: ToastType.warning,
+      );
+      return;
+    }
+    if (_bankNameCtrl.text.trim().isEmpty ||
+        _accNumCtrl.text.trim().isEmpty ||
+        _ifscCtrl.text.trim().isEmpty) {
+      ToastService.show(
+        title: 'Bank details required',
+        message: 'Fill in the bank name, account number and IFSC code.',
         type: ToastType.warning,
       );
       return;
@@ -68,360 +156,430 @@ class _AuditorWalletWithdrawScreenState extends State<AuditorWalletWithdrawScree
     final confirmed = await AppConfirmDialog.show(
       context: context,
       title: 'Confirm Withdrawal',
-      message: 'Are you sure you want to request a withdrawal of ₹${_amountCtrl.text} to ${_bankNameCtrl.text}?',
+      message: 'Request ${_money(amount)} to ${_bankNameCtrl.text.trim()}? '
+          'The amount is locked until the request is processed.',
       confirmLabel: 'Request Withdrawal',
-      confirmButtonColor: _navyBlue,
+      confirmButtonColor: _navy,
     );
+    if (confirmed != true) return;
 
-    if (confirmed == true) {
+    setState(() => _submitting = true);
+    try {
+      await AuditorWalletService.instance.submitWithdrawal(
+        userId: widget.userId,
+        amount: amount,
+        bankName: _bankNameCtrl.text.trim(),
+        accountNo: _accNumCtrl.text.trim(),
+        ifscCode: _ifscCtrl.text.trim().toUpperCase(),
+      );
+
+      if (!mounted) return;
       ToastService.show(
-        title: 'Withdrawal Requested',
+        title: 'Withdrawal requested',
         message: 'Your request has been submitted and is pending review.',
         type: ToastType.success,
       );
-      
-      // Clear form after submission
-      setState(() {
-        _amountCtrl.clear();
-        _bankNameCtrl.clear();
-        _accNumCtrl.clear();
-        _ifscCtrl.clear();
-      });
+      _amountCtrl.clear();
+      _bankNameCtrl.clear();
+      _accNumCtrl.clear();
+      _ifscCtrl.clear();
+      setState(() => _submitting = false);
+      await _load();
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _submitting = false);
+      ToastService.show(
+        title: 'Could not submit',
+        message: e.toString(),
+        type: ToastType.error,
+      );
     }
   }
 
   @override
   Widget build(BuildContext context) {
     return AppPage(
-      title: null, // Custom layout requires no default header
+      title: null, // custom header
       children: [
         Center(
           child: Container(
-            constraints: const BoxConstraints(maxWidth: 800), // Perfect for mobile & tablet constraints
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                // 1. MAIN WITHDRAWAL FORM CARD
-                _buildWithdrawFormCard(),
-                const SizedBox(height: 24),
-
-                // 2. GOOD TO KNOW (NAVY CARD)
-                _buildGoodToKnowCard(),
-                const SizedBox(height: 24),
-
-                // 3. SYSTEM STATUS CARD (GOLD CARD)
-                _buildSystemStatusCard(),
-                const SizedBox(height: 24),
-
-                // 4. WITHDRAWAL HISTORY TABLE
-                _buildWithdrawalHistoryTable(context),
-                const SizedBox(height: 40),
-              ],
-            ),
+                                    constraints: const BoxConstraints(maxWidth: 800), 
+            child: _body(),
           ),
         ),
       ],
     );
   }
 
-  // ==========================================================================
-  // 1. WITHDRAWAL FORM CARD
-  // ==========================================================================
-  Widget _buildWithdrawFormCard() {
-    return Container(
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(32),
-        border: Border.all(color: _lightBorder, width: 2),
-        boxShadow: [
-          BoxShadow(color: Colors.black.withOpacity(0.02), blurRadius: 20, offset: const Offset(0, 10))
-        ],
-      ),
-      child: Stack(
-        alignment: Alignment.topCenter,
-        children: [
-          // Faint Watermark (Bank Icon)
-          Positioned(
-            top: 40,
-            child: Icon(
-              Icons.account_balance,
-              size: 160,
-              color: const Color(0xFFF1F5F9).withOpacity(0.5), // Very faint
-            ),
-          ),
-          
-          Padding(
-            padding: const EdgeInsets.all(32.0),
-            child: Column(
-              children: [
-                // Available Balance Badge
-                Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                  decoration: BoxDecoration(
-                    color: AppColors.goldBadgeBg,
-                    borderRadius: BorderRadius.circular(20),
-                    border: Border.all(color: AppColors.goldBorder),
-                  ),
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: const [
-                      Icon(Icons.account_balance_wallet_outlined, color: AppColors.goldColor, size: 14),
-                      SizedBox(width: 8),
-                      Text(
-                        'AVAILABLE BALANCE: ₹0',
-                        style: TextStyle(color: AppColors.goldColor, fontSize: 10, fontWeight: FontWeight.w900, fontStyle: FontStyle.italic, letterSpacing: 1.0),
-                      ),
-                    ],
-                  ),
-                ),
-                const SizedBox(height: 24),
-                
-                // Titles
-                Text(
-                  'WITHDRAW MONEY',
-                  textAlign: TextAlign.center,
-                  style: TextStyle(color: _navyBlue, fontSize: 26, fontWeight: FontWeight.w900, fontStyle: FontStyle.italic, letterSpacing: -1.0),
-                ),
-                const SizedBox(height: 8),
-                Text(
-                  'ENTER YOUR BANK DETAILS TO RECEIVE YOUR MONEY',
-                  textAlign: TextAlign.center,
-                  style: TextStyle(color: _slateText, fontSize: 9, fontWeight: FontWeight.w900, fontStyle: FontStyle.italic, letterSpacing: 1.0, height: 1.5),
-                ),
-                const SizedBox(height: 40),
+  Widget _body() {
+    if (_loading) {
+      return const Padding(
+        padding: EdgeInsets.symmetric(vertical: 120),
+        child: Center(child: AppLoader()),
+      );
+    }
 
-                // Form Fields
-                _buildInputField('AMOUNT (₹)', '0.00', _amountCtrl, isNumber: true, suffixIcon: Icons.unfold_more),
-                _buildInputField('BANK NAME', 'Bank Name', _bankNameCtrl),
-                _buildInputField('ACCOUNT NUMBER', 'Account Number', _accNumCtrl, isNumber: true),
-                _buildInputField('IFSC CODE', 'IFSC CODE', _ifscCtrl),
-                
-                const SizedBox(height: 16),
-
-                // Request Button
-                SizedBox(
-                  width: double.infinity,
-                  child: ElevatedButton.icon(
-                    onPressed: _handleWithdrawRequest,
-                    icon: const Icon(Icons.send_outlined, size: 16, color: AppColors.goldColor),
-                    label: const Text('REQUEST WITHDRAWAL', style: TextStyle(color: AppColors.goldColor, fontWeight: FontWeight.w900, fontStyle: FontStyle.italic, fontSize: 12, letterSpacing: 1.5)),
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: _navyBlue,
-                      padding: const EdgeInsets.symmetric(vertical: 20),
-                      elevation: 10,
-                      shadowColor: _navyBlue.withOpacity(0.3),
-                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-                    ),
-                  ),
-                ),
-              ],
+    if (_error != null) {
+      return Padding(
+        padding: const EdgeInsets.symmetric(vertical: 80),
+        child: Column(
+          children: [
+            const Icon(Icons.error_outline, color: AppColors.kDanger, size: 40),
+            const SizedBox(height: 16),
+            const Text(
+              'COULD NOT LOAD WITHDRAWALS',
+              style: TextStyle(
+                color: _navy,
+                fontSize: 12,
+                fontWeight: FontWeight.w900,
+                fontStyle: FontStyle.italic,
+                letterSpacing: 1.0,
+              ),
             ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildInputField(String label, String hint, TextEditingController controller, {bool isNumber = false, IconData? suffixIcon}) {
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 24.0),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            label,
-            style: const TextStyle(color: Color(0xFF94A3B8), fontSize: 10, fontWeight: FontWeight.w900, fontStyle: FontStyle.italic, letterSpacing: 1.5),
-          ),
-          const SizedBox(height: 8),
-          TextFormField(
-            controller: controller,
-            keyboardType: isNumber ? const TextInputType.numberWithOptions(decimal: true) : TextInputType.text,
-            style: TextStyle(color: _navyBlue, fontSize: 18, fontWeight: FontWeight.w900, fontStyle: FontStyle.italic),
-            decoration: InputDecoration(
-              hintText: hint,
-              hintStyle: const TextStyle(color: Color(0xFFCBD5E1), fontSize: 14, fontWeight: FontWeight.w900, fontStyle: FontStyle.italic),
-              filled: true,
-              fillColor: _lightBg,
-              contentPadding: const EdgeInsets.symmetric(horizontal: 24, vertical: 20),
-              border: OutlineInputBorder(borderRadius: BorderRadius.circular(16), borderSide: BorderSide.none),
-              enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(16), borderSide: BorderSide.none),
-              focusedBorder: const OutlineInputBorder(borderRadius: BorderRadius.all(Radius.circular(16)), borderSide: BorderSide(color: AppColors.kPrimary, width: 2)),
-              suffixIcon: suffixIcon != null ? Icon(suffixIcon, color: _navyBlue, size: 24) : null,
+            const SizedBox(height: 8),
+            Text(
+              _error!,
+              textAlign: TextAlign.center,
+              style: const TextStyle(color: _slate, fontSize: 12),
             ),
-          ),
-        ],
-      ),
+            const SizedBox(height: 16),
+            ElevatedButton(onPressed: _load, child: const Text('RETRY')),
+          ],
+        ),
+      );
+    }
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        _header(),
+        const SizedBox(height: 20),
+        _backButton(),
+        const SizedBox(height: 24),
+        _requestCard(),
+        const SizedBox(height: 24),
+        _reservesCard(),
+        const SizedBox(height: 24),
+        _historyCard(),
+        const SizedBox(height: 40),
+      ],
     );
   }
 
   // ==========================================================================
-  // 2. GOOD TO KNOW CARD
+  // HEADER
   // ==========================================================================
-  Widget _buildGoodToKnowCard() {
-    return Container(
-      padding: const EdgeInsets.all(32),
-      decoration: BoxDecoration(
-        color: _navyBlue,
-        borderRadius: BorderRadius.circular(32),
-        boxShadow: [
-          BoxShadow(color: _navyBlue.withOpacity(0.2), blurRadius: 20, offset: const Offset(0, 10))
-        ],
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: const [
-              Icon(Icons.shield_outlined, color: AppColors.goldColor, size: 20),
-              SizedBox(width: 12),
-              Text('GOOD TO KNOW', style: TextStyle(color: Colors.white, fontSize: 14, fontWeight: FontWeight.w900, fontStyle: FontStyle.italic, letterSpacing: 0.5)),
-            ],
+
+  Widget _header() {
+    return const Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            Icon(Icons.star, color: AppColors.goldColor, size: 8),
+            SizedBox(width: 8),
+            Text(
+              'DISBURSEMENT HUB',
+              style: TextStyle(
+                color: _slate,
+                fontSize: 10,
+                fontWeight: FontWeight.w900,
+                fontStyle: FontStyle.italic,
+                letterSpacing: 2.0,
+              ),
+            ),
+          ],
+        ),
+        SizedBox(height: 8),
+        Text(
+          'WITHDRAWALS',
+          style: TextStyle(
+            color: _royal,
+            fontSize: 30,
+            fontWeight: FontWeight.w900,
+            fontStyle: FontStyle.italic,
+            letterSpacing: -1.0,
           ),
-          const SizedBox(height: 24),
-          _buildBulletPoint('All withdrawals are reviewed for your security.'),
-          _buildBulletPoint('Processing time: 2-24 business hours.'),
-          _buildBulletPoint('Limits may apply based on your KYC status.'),
-          _buildBulletPoint('Please double-check your bank details before submitting.', isLast: true),
-        ],
-      ),
+        ),
+        SizedBox(height: 4),
+        Text(
+          'WITHDRAW YOUR EARNINGS TO YOUR BANK ACCOUNT',
+          style: TextStyle(
+            color: _slate,
+            fontSize: 10,
+            fontWeight: FontWeight.w900,
+            fontStyle: FontStyle.italic,
+            letterSpacing: 1.0,
+          ),
+        ),
+      ],
     );
   }
 
-  Widget _buildBulletPoint(String text, {bool isLast = false}) {
-    return Padding(
-      padding: EdgeInsets.only(bottom: isLast ? 0 : 16.0),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          const Padding(
-            padding: EdgeInsets.only(top: 4.0),
-            child: Icon(Icons.circle, color: AppColors.goldColor, size: 6),
+  Widget _backButton() {
+    return Align(
+      alignment: Alignment.centerLeft,
+      child: OutlinedButton.icon(
+        onPressed: _backToWallet,
+        icon: const Icon(Icons.arrow_back_rounded, size: 16),
+        label: const Text(
+          'BACK TO WALLET',
+          style: TextStyle(
+            fontSize: 11,
+            fontWeight: FontWeight.w900,
+            fontStyle: FontStyle.italic,
+            letterSpacing: 1.0,
           ),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Text(
-              text,
-              style: TextStyle(color: Colors.white.withOpacity(0.7), fontSize: 11, fontWeight: FontWeight.w800, fontStyle: FontStyle.italic, letterSpacing: 0.5, height: 1.4),
-            ),
-          ),
-        ],
+        ),
+        style: OutlinedButton.styleFrom(
+          foregroundColor: _navy,
+          side: const BorderSide(color: _hairline, width: 2),
+          backgroundColor: Colors.white,
+          padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
+          shape:
+              RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        ),
       ),
     );
   }
 
   // ==========================================================================
-  // 3. SYSTEM STATUS CARD
+  // REQUEST FORM
   // ==========================================================================
-  Widget _buildSystemStatusCard() {
+
+  Widget _requestCard() {
     return Container(
       padding: const EdgeInsets.all(24),
       decoration: BoxDecoration(
-        color: AppColors.goldBadgeBg,
-        borderRadius: BorderRadius.circular(32),
-        border: Border.all(color: AppColors.goldBorder, width: 2),
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(28),
+        border: Border.all(color: _hairline, width: 2),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Row(
-            children: const [
-              Icon(Icons.show_chart_rounded, color: AppColors.goldColor, size: 20),
-              SizedBox(width: 12),
-              Text('STATUS', style: TextStyle(color: AppColors.kPrimaryDark, fontSize: 12, fontWeight: FontWeight.w900, fontStyle: FontStyle.italic, letterSpacing: 1.0)),
-            ],
-          ),
-          const SizedBox(height: 12),
-          RichText(
-            text: TextSpan(
-              style: const TextStyle(color: AppColors.goldColor, fontSize: 11, fontWeight: FontWeight.w900, fontStyle: FontStyle.italic, letterSpacing: 0.5, height: 1.5),
-              children: [
-                const TextSpan(text: 'System status: '),
-                TextSpan(text: 'Online. ', style: TextStyle(color: Colors.green.shade600)), // Pop of green for online
-                const TextSpan(text: 'Large transfers above ₹50,000 may take a little longer to verify.'),
-              ],
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  // ==========================================================================
-  // 4. WITHDRAWAL HISTORY TABLE
-  // ==========================================================================
-  Widget _buildWithdrawalHistoryTable(BuildContext context) {
-    return Container(
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(32),
-        border: Border.all(color: _lightBorder, width: 2),
-        boxShadow: [
-          BoxShadow(color: Colors.black.withOpacity(0.02), blurRadius: 20, offset: const Offset(0, 10))
-        ],
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          // Header
-          Padding(
-            padding: const EdgeInsets.all(32.0),
-            child: Row(
-              children: [
-                Container(
-                  padding: const EdgeInsets.all(12),
-                  decoration: BoxDecoration(color: _navyBlue, borderRadius: BorderRadius.circular(12)),
-                  child: const Icon(Icons.history, color: AppColors.goldColor, size: 20),
+          Stack(
+            children: [
+              Positioned(
+                right: 0,
+                top: -10,
+                child: Icon(
+                  Icons.account_balance_rounded,
+                  size: 96,
+                  color: _hairline.withOpacity(0.9),
                 ),
-                const SizedBox(width: 16),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text('WITHDRAWAL HISTORY', style: TextStyle(color: _navyBlue, fontSize: 16, fontWeight: FontWeight.w900, fontStyle: FontStyle.italic, letterSpacing: -0.5)),
-                      const SizedBox(height: 4),
-                      Text('YOUR PAST WITHDRAWALS', style: TextStyle(color: _slateText, fontSize: 9, fontWeight: FontWeight.w900, fontStyle: FontStyle.italic, letterSpacing: 1.0)),
-                    ],
-                  ),
-                ),
-              ],
-            ),
-          ),
-          const Divider(height: 1, thickness: 2, color: Color(0xFFF1F5F9)),
-          
-          // Scrollable Data Table Wrapper
-          SingleChildScrollView(
-            scrollDirection: Axis.horizontal,
-            child: SizedBox(
-              // Fixed table width (not just a minWidth) so this doesn't hand an
-              // unbounded max-width down to the Column below, which made layout
-              // thrash every frame and left the page blank.
-              width: MediaQuery.of(context).size.width > 800 ? 800 : MediaQuery.of(context).size.width - 64,
-              child: Column(
+              ),
+              Row(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  // Custom Header Row
                   Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 24),
-                    decoration: const BoxDecoration(color: Color(0xFFF8FAFC)),
-                    child: Row(
+                    padding: const EdgeInsets.all(12),
+                    decoration: BoxDecoration(
+                      color: _royal,
+                      borderRadius: BorderRadius.circular(16),
+                    ),
+                    child: const Icon(Icons.credit_card_rounded,
+                        color: AppColors.goldColor, size: 20),
+                  ),
+                  const SizedBox(width: 14),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        _buildHeaderCell('REQUEST\nID', width: 100),
-                        _buildHeaderCell('AMOUNT', width: 120),
-                        _buildHeaderCell('BANK', width: 150),
-                        _buildHeaderCell('STATUS', width: 100),
-                        _buildHeaderCell('DATE', width: 100),
+                        const Text(
+                          'INITIALIZE DISBURSEMENT',
+                          style: TextStyle(
+                            color: _royal,
+                            fontSize: 16,
+                            fontWeight: FontWeight.w900,
+                            fontStyle: FontStyle.italic,
+                            letterSpacing: -0.3,
+                          ),
+                        ),
+                        const SizedBox(height: 4),
+                        Text(
+                          'SUBMIT YOUR LIQUIDATION REQUEST FOR PROCESSING',
+                          style: TextStyle(
+                            color: _slate.withOpacity(0.9),
+                            fontSize: 10,
+                            height: 1.4,
+                            fontWeight: FontWeight.w900,
+                            fontStyle: FontStyle.italic,
+                            letterSpacing: 0.5,
+                          ),
+                        ),
                       ],
                     ),
                   ),
-                  
-                  // Body (Empty State or Data Rows)
-                  if (_withdrawals.isEmpty)
-                    _buildEmptyState()
-                  else
-                    ..._withdrawals.map((item) => _buildDataRow(item)).toList(),
-                    
-                  const SizedBox(height: 24), // Bottom padding
                 ],
+              ),
+            ],
+          ),
+          const SizedBox(height: 32),
+          _fieldLabel('LIQUID QUANTITY (₹)'),
+          const SizedBox(height: 10),
+          TextField(
+            controller: _amountCtrl,
+            keyboardType: const TextInputType.numberWithOptions(decimal: true),
+            inputFormatters: [
+              FilteringTextInputFormatter.allow(RegExp(r'[0-9.]')),
+            ],
+            style: const TextStyle(
+              color: _navy,
+              fontSize: 26,
+              fontWeight: FontWeight.w900,
+              fontStyle: FontStyle.italic,
+            ),
+            decoration: InputDecoration(
+              hintText: '0.00',
+              hintStyle: const TextStyle(
+                color: _label,
+                fontSize: 26,
+                fontWeight: FontWeight.w900,
+                fontStyle: FontStyle.italic,
+              ),
+              prefixIcon: const Padding(
+                padding: EdgeInsets.only(left: 20, right: 12),
+                child: Text(
+                  '₹',
+                  style: TextStyle(
+                    color: _label,
+                    fontSize: 24,
+                    fontWeight: FontWeight.w900,
+                    fontStyle: FontStyle.italic,
+                  ),
+                ),
+              ),
+              prefixIconConstraints: const BoxConstraints(minWidth: 0),
+              filled: true,
+              fillColor: AppColors.kBackground,
+              contentPadding: const EdgeInsets.symmetric(vertical: 22),
+              border: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(18),
+                borderSide: BorderSide.none,
+              ),
+              enabledBorder: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(18),
+                borderSide: BorderSide.none,
+              ),
+              focusedBorder: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(18),
+                borderSide: const BorderSide(color: _royal, width: 1.5),
+              ),
+            ),
+          ),
+          const SizedBox(height: 10),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Text(
+                'MIN: ${_money(_minWithdrawal)}',
+                style: const TextStyle(
+                  color: _slate,
+                  fontSize: 9,
+                  fontWeight: FontWeight.w900,
+                  fontStyle: FontStyle.italic,
+                  letterSpacing: 0.8,
+                ),
+              ),
+              Text(
+                'MAX: ${_money(_overview.balance)}',
+                style: const TextStyle(
+                  color: AppColors.goldColor,
+                  fontSize: 9,
+                  fontWeight: FontWeight.w900,
+                  fontStyle: FontStyle.italic,
+                  letterSpacing: 0.8,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 26),
+          _fieldLabel('BANK ACCOUNT'),
+          const SizedBox(height: 10),
+          // Only one payout rail exists today; it reads as a chosen option
+          // rather than pretending there is a choice to make.
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 18),
+            decoration: BoxDecoration(
+              color: AppColors.kBackground,
+              borderRadius: BorderRadius.circular(18),
+            ),
+            child: const Row(
+              children: [
+                Icon(Icons.account_balance_outlined, size: 18, color: _navy),
+                SizedBox(width: 14),
+                Expanded(
+                  child: Text(
+                    'EXTERNAL BANK TRANSFER',
+                    style: TextStyle(
+                      color: _navy,
+                      fontSize: 12,
+                      fontWeight: FontWeight.w900,
+                      fontStyle: FontStyle.italic,
+                      letterSpacing: 0.5,
+                    ),
+                  ),
+                ),
+                Icon(Icons.check_circle_outline_rounded,
+                    size: 18, color: AppColors.goldColor),
+              ],
+            ),
+          ),
+          const SizedBox(height: 26),
+          _textField(
+            label: 'BANK NAME',
+            controller: _bankNameCtrl,
+            hint: 'E.G. STATE BANK OF INDIA',
+          ),
+          const SizedBox(height: 22),
+          _textField(
+            label: 'ACCOUNT NUMBER',
+            controller: _accNumCtrl,
+            hint: '00000000000',
+            keyboardType: TextInputType.number,
+            inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+          ),
+          const SizedBox(height: 22),
+          _textField(
+            label: 'IFSC CODE',
+            controller: _ifscCtrl,
+            hint: 'SBIN000XXXX',
+            textCapitalization: TextCapitalization.characters,
+          ),
+          const SizedBox(height: 26),
+          _securityNotice(),
+          const SizedBox(height: 26),
+          SizedBox(
+            width: double.infinity,
+            child: ElevatedButton.icon(
+              onPressed: _canSubmit ? _submit : null,
+              icon: _submitting
+                  ? const SizedBox(
+                      width: 16,
+                      height: 16,
+                      child: CircularProgressIndicator(
+                          strokeWidth: 2, color: Colors.white),
+                    )
+                  : const Icon(Icons.send_rounded, size: 16),
+              label: Text(
+                _submitting ? 'SUBMITTING…' : 'SUBMIT WITHDRAWAL REQUEST',
+                style: const TextStyle(
+                  fontSize: 12,
+                  fontWeight: FontWeight.w900,
+                  fontStyle: FontStyle.italic,
+                  letterSpacing: 1.5,
+                ),
+              ),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: _royal,
+                foregroundColor: Colors.white,
+                disabledBackgroundColor: _royal.withOpacity(0.45),
+                disabledForegroundColor: Colors.white,
+                padding: const EdgeInsets.symmetric(vertical: 20),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(18),
+                ),
               ),
             ),
           ),
@@ -430,85 +588,353 @@ class _AuditorWalletWithdrawScreenState extends State<AuditorWalletWithdrawScree
     );
   }
 
-  // Header Cell Helper
-  Widget _buildHeaderCell(String title, {required double width}) {
-    return SizedBox(
-      width: width,
-      child: Text(
-        title,
-        style: const TextStyle(fontWeight: FontWeight.w900, fontStyle: FontStyle.italic, fontSize: 10, color: Color(0xFF94A3B8), letterSpacing: 1.0),
+  Widget _securityNotice() {
+    return Container(
+      padding: const EdgeInsets.all(18),
+      decoration: BoxDecoration(
+        color: const Color(0xFFF5F8FF),
+        borderRadius: BorderRadius.circular(18),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Container(
+            padding: const EdgeInsets.all(8),
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: const Icon(Icons.shield_outlined, size: 16, color: _royal),
+          ),
+          const SizedBox(width: 14),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text(
+                  'SECURITY CHECK ACTIVE',
+                  style: TextStyle(
+                    color: _navy,
+                    fontSize: 11,
+                    fontWeight: FontWeight.w900,
+                    fontStyle: FontStyle.italic,
+                    letterSpacing: 0.5,
+                  ),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  'WITHDRAWAL REQUESTS ARE USUALLY PROCESSED WITHIN 24-48 '
+                  'HOURS. THE REQUESTED AMOUNT WILL BE LOCKED AFTER '
+                  'SUBMISSION.',
+                  style: TextStyle(
+                    color: _royal.withOpacity(0.85),
+                    fontSize: 10,
+                    height: 1.5,
+                    fontWeight: FontWeight.w900,
+                    fontStyle: FontStyle.italic,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
       ),
     );
   }
 
-  // Data Row Helper
-  Widget _buildDataRow(WithdrawalItem item) {
-    return Column(
-      children: [
-        const Divider(height: 1, color: Color(0xFFF1F5F9), thickness: 1.5),
-        Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 20),
-          child: Row(
+  // ==========================================================================
+  // RESERVES
+  // ==========================================================================
+
+  Widget _reservesCard() {
+    return Container(
+      padding: const EdgeInsets.all(28),
+      decoration: BoxDecoration(
+        color: _royal,
+        borderRadius: BorderRadius.circular(28),
+      ),
+      child: Stack(
+        children: [
+          Positioned(
+            right: -10,
+            bottom: -20,
+            child: Icon(
+              Icons.account_balance_wallet_rounded,
+              size: 120,
+              color: Colors.white.withOpacity(0.06),
+            ),
+          ),
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              SizedBox(width: 100, child: Text(item.id, style: _dataStyle(color: _navyBlue))),
-              SizedBox(width: 120, child: Text('₹${item.amount.toStringAsFixed(2)}', style: _dataStyle(color: _navyBlue, size: 14))),
-              SizedBox(width: 150, child: Text(item.bank, style: _dataStyle(color: _slateText))),
-              SizedBox(width: 100, child: _buildStatusBadge(item.status)),
-              SizedBox(width: 100, child: Text(item.date, style: _dataStyle(color: _slateText, size: 10))),
+              const Text(
+                'LIQUID RESERVES',
+                style: TextStyle(
+                  color: AppColors.goldColor,
+                  fontSize: 11,
+                  fontWeight: FontWeight.w900,
+                  fontStyle: FontStyle.italic,
+                  letterSpacing: 2.0,
+                ),
+              ),
+              const SizedBox(height: 12),
+              Text(
+                _money(_overview.balance),
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 38,
+                  fontWeight: FontWeight.w900,
+                  fontStyle: FontStyle.italic,
+                  letterSpacing: -1.5,
+                ),
+              ),
+              const SizedBox(height: 6),
+              Text(
+                'AVAILABLE FOR DISBURSEMENT',
+                style: TextStyle(
+                  color: Colors.white.withOpacity(0.75),
+                  fontSize: 10,
+                  fontWeight: FontWeight.w900,
+                  fontStyle: FontStyle.italic,
+                  letterSpacing: 1.0,
+                ),
+              ),
+              const SizedBox(height: 24),
+              Container(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 18, vertical: 16),
+                decoration: BoxDecoration(
+                  color: Colors.white.withOpacity(0.10),
+                  borderRadius: BorderRadius.circular(16),
+                ),
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: Text(
+                        'LOCKED FUNDS',
+                        style: TextStyle(
+                          color: Colors.white.withOpacity(0.85),
+                          fontSize: 10,
+                          fontWeight: FontWeight.w900,
+                          fontStyle: FontStyle.italic,
+                          letterSpacing: 1.0,
+                        ),
+                      ),
+                    ),
+                    // Debits still sitting at status='pending' — already
+                    // requested, not yet paid out.
+                    Text(
+                      _money(_overview.pendingPayouts),
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 12,
+                        fontWeight: FontWeight.w900,
+                        fontStyle: FontStyle.italic,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
             ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  // ==========================================================================
+  // HISTORY
+  // ==========================================================================
+
+  Widget _historyCard() {
+    return Container(
+      padding: const EdgeInsets.all(24),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(28),
+        border: Border.all(color: _hairline, width: 2),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Row(
+            children: [
+              Icon(Icons.history_rounded, size: 18, color: AppColors.goldColor),
+              SizedBox(width: 10),
+              Expanded(
+                child: Text(
+                  'RECENT DISBURSEMENTS',
+                  style: TextStyle(
+                    color: _royal,
+                    fontSize: 15,
+                    fontWeight: FontWeight.w900,
+                    fontStyle: FontStyle.italic,
+                    letterSpacing: -0.3,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 20),
+          if (_withdrawals.isEmpty)
+            const Padding(
+              padding: EdgeInsets.symmetric(vertical: 40),
+              child: Center(
+                child: Text(
+                  'NO DISBURSEMENT HISTORY',
+                  style: TextStyle(
+                    color: _label,
+                    fontSize: 11,
+                    fontWeight: FontWeight.w900,
+                    fontStyle: FontStyle.italic,
+                    letterSpacing: 1.5,
+                  ),
+                ),
+              ),
+            )
+          else
+            for (final record in _withdrawals) _historyRow(record),
+        ],
+      ),
+    );
+  }
+
+  Widget _historyRow(WithdrawalRecord record) {
+    final (Color color, String label) = switch (record.status.toUpperCase()) {
+      'COMPLETED' || 'APPROVED' || 'PAID' => (AppColors.kSuccess, 'PAID'),
+      'REJECTED' || 'FAILED' => (AppColors.kDanger, 'REJECTED'),
+      _ => (AppColors.kWarning, 'PENDING'),
+    };
+
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 12),
+      child: Container(
+        padding: const EdgeInsets.all(16),
+        decoration: BoxDecoration(
+          color: AppColors.kBackground,
+          borderRadius: BorderRadius.circular(16),
+        ),
+        child: Row(
+          children: [
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    _money(record.amount),
+                    style: const TextStyle(
+                      color: _navy,
+                      fontSize: 14,
+                      fontWeight: FontWeight.w900,
+                      fontStyle: FontStyle.italic,
+                    ),
+                  ),
+                  const SizedBox(height: 2),
+                  Text(
+                    record.date == null
+                        ? record.bank
+                        : '${_dateFmt.format(record.date!)} · ${record.bank}',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(color: _slate, fontSize: 10),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(width: 12),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+              decoration: BoxDecoration(
+                color: color.withOpacity(0.12),
+                borderRadius: BorderRadius.circular(999),
+              ),
+              child: Text(
+                label,
+                style: TextStyle(
+                  color: color,
+                  fontSize: 9,
+                  fontWeight: FontWeight.w900,
+                  fontStyle: FontStyle.italic,
+                  letterSpacing: 0.8,
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  // ==========================================================================
+  // SHARED BITS
+  // ==========================================================================
+
+  Widget _fieldLabel(String text) {
+    return Text(
+      text,
+      style: const TextStyle(
+        color: _slate,
+        fontSize: 10,
+        fontWeight: FontWeight.w900,
+        fontStyle: FontStyle.italic,
+        letterSpacing: 1.0,
+      ),
+    );
+  }
+
+  Widget _textField({
+    required String label,
+    required TextEditingController controller,
+    required String hint,
+    TextInputType? keyboardType,
+    TextCapitalization textCapitalization = TextCapitalization.none,
+    List<TextInputFormatter>? inputFormatters,
+  }) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        _fieldLabel(label),
+        const SizedBox(height: 10),
+        TextField(
+          controller: controller,
+          keyboardType: keyboardType,
+          textCapitalization: textCapitalization,
+          inputFormatters: inputFormatters,
+          // The submit button enables only once every field is filled.
+          onChanged: (_) => setState(() {}),
+          style: const TextStyle(
+            color: _navy,
+            fontSize: 13,
+            fontWeight: FontWeight.w900,
+            fontStyle: FontStyle.italic,
+          ),
+          decoration: InputDecoration(
+            hintText: hint,
+            hintStyle: const TextStyle(
+              color: _label,
+              fontSize: 13,
+              fontWeight: FontWeight.w900,
+              fontStyle: FontStyle.italic,
+            ),
+            filled: true,
+            fillColor: AppColors.kBackground,
+            contentPadding:
+                const EdgeInsets.symmetric(horizontal: 18, vertical: 20),
+            border: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(18),
+              borderSide: BorderSide.none,
+            ),
+            enabledBorder: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(18),
+              borderSide: BorderSide.none,
+            ),
+            focusedBorder: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(18),
+              borderSide: const BorderSide(color: _royal, width: 1.5),
+            ),
           ),
         ),
       ],
-    );
-  }
-
-  TextStyle _dataStyle({Color color = AppColors.kTextDark, double size = 12}) {
-    return TextStyle(fontWeight: FontWeight.w900, fontStyle: FontStyle.italic, fontSize: size, color: color);
-  }
-
-  // Status Badge Helper
-  Widget _buildStatusBadge(String status) {
-    Color bg = AppColors.goldBadgeBg;
-    Color text = AppColors.goldColor;
-
-    if (status == 'COMPLETED') {
-      bg = const Color(0xFFF0FDF4); text = const Color(0xFF16A34A);
-    } else if (status == 'PENDING') {
-      bg = const Color(0xFFFFFBEB); text = AppColors.goldColor;
-    } else if (status == 'REJECTED') {
-      bg = const Color(0xFFFEF2F2); text = const Color(0xFFDC2626);
-    }
-
-    return Align(
-      alignment: Alignment.centerLeft,
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-        decoration: BoxDecoration(color: bg, borderRadius: BorderRadius.circular(12)),
-        child: Text(
-          status,
-          style: TextStyle(color: text, fontWeight: FontWeight.w900, fontStyle: FontStyle.italic, fontSize: 9, letterSpacing: 0.5),
-        ),
-      ),
-    );
-  }
-
-  // Empty State Helper matching the screenshot
-  Widget _buildEmptyState() {
-    return SizedBox(
-      width: double.infinity,
-      height: 200, 
-      child: Center(
-        child: Text(
-          'NO WITHDRAWALS YET',
-          style: TextStyle(
-            fontSize: 11,
-            fontWeight: FontWeight.w900,
-            fontStyle: FontStyle.italic,
-            color: const Color(0xFF94A3B8).withOpacity(0.8),
-            letterSpacing: 1.0,
-          ),
-        ),
-      ),
     );
   }
 }

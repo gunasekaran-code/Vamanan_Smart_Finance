@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:frontend/core/theme/app_theme.dart';
 import 'package:frontend/shared/widgets/app_toast.dart';
+import 'package:frontend/services/settings_service.dart';
+import 'package:frontend/shared/widgets/app_loader.dart';
 
 class CompanyNodeWidget extends StatefulWidget {
   const CompanyNodeWidget({super.key});
@@ -15,6 +17,29 @@ class _CompanyNodeWidgetState extends State<CompanyNodeWidget> {
   final TextEditingController _addressCtrl = TextEditingController(text: '123, Gold Plaza, Main Road, City, State, 600001');
   final TextEditingController _phoneCtrl = TextEditingController(text: '+91 90000 00000');
   final TextEditingController _emailCtrl = TextEditingController(text: 'support@makkalgold.com');
+  bool _isLoading = true;
+  bool _isSaving = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadSettings();
+  }
+
+  Future<void> _loadSettings() async {
+    try {
+      final settings = await SettingsService.instance.fetchSettings();
+      if (!mounted) return;
+      _companyNameCtrl.text = settings.value('company_name', _companyNameCtrl.text);
+      _addressCtrl.text = settings.value('company_address', _addressCtrl.text);
+      _phoneCtrl.text = settings.value('support_phone', _phoneCtrl.text);
+      _emailCtrl.text = settings.value('support_email', _emailCtrl.text);
+      setState(() => _isLoading = false);
+    } catch (error) {
+      if (mounted) setState(() => _isLoading = false);
+      ToastService.show(title: 'Load Failed', message: error.toString(), type: ToastType.error);
+    }
+  }
 
   @override
   void dispose() {
@@ -25,7 +50,7 @@ class _CompanyNodeWidgetState extends State<CompanyNodeWidget> {
     super.dispose();
   }
 
-  void _handleSynchronizeNodeInfo() {
+  Future<void> _handleSynchronizeNodeInfo() async {
     // Basic validation
     if (_companyNameCtrl.text.isEmpty || _addressCtrl.text.isEmpty) {
       ToastService.show(
@@ -36,11 +61,25 @@ class _CompanyNodeWidgetState extends State<CompanyNodeWidget> {
       return;
     }
 
-    ToastService.show(
+    setState(() => _isSaving = true);
+    try {
+      await SettingsService.instance.saveSettings({
+        'company_name': _companyNameCtrl.text.trim(),
+        'company_address': _addressCtrl.text.trim(),
+        'support_phone': _phoneCtrl.text.trim(),
+        'support_email': _emailCtrl.text.trim(),
+      });
+      if (!mounted) return;
+      ToastService.show(
       title: 'Node Synchronized', 
       message: 'Company institutional details have been updated globally.', 
       type: ToastType.success
-    );
+      );
+    } catch (error) {
+      if (mounted) ToastService.show(title: 'Save Failed', message: error.toString(), type: ToastType.error);
+    } finally {
+      if (mounted) setState(() => _isSaving = false);
+    }
   }
 
   @override
@@ -52,7 +91,9 @@ class _CompanyNodeWidgetState extends State<CompanyNodeWidget> {
         border: Border.all(color: AppColors.kBorder),
       ),
       padding: const EdgeInsets.all(32.0),
-      child: Column(
+        child: _isLoading
+          ? const Center(child: AppLoader())
+          : Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           // 1. Company Name Field
@@ -113,7 +154,7 @@ class _CompanyNodeWidgetState extends State<CompanyNodeWidget> {
           Align(
             alignment: Alignment.centerRight,
             child: ElevatedButton.icon(
-              onPressed: _handleSynchronizeNodeInfo,
+              onPressed: _isSaving ? null : _handleSynchronizeNodeInfo,
               icon: const Icon(Icons.language, size: 16), // Globe/Node icon
               label: const Text(
                 'SYNCHRONIZE NODE INFO', 

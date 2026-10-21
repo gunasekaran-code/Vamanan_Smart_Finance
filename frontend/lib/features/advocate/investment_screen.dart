@@ -1,8 +1,10 @@
 import 'package:flutter/material.dart';
-import 'investment_model.dart';
+import 'package:frontend/models/investment_model.dart';
+import 'package:frontend/services/investment_service.dart';
 import 'package:frontend/shared/widgets/app_toast.dart';
 import 'package:frontend/core/theme/app_theme.dart';
 import 'package:frontend/core/theme/confirm_dialog.dart';
+import 'package:frontend/shared/widgets/app_loader.dart';
 
 class InvestmentsScreen extends StatefulWidget {
   const InvestmentsScreen({super.key});
@@ -12,64 +14,86 @@ class InvestmentsScreen extends StatefulWidget {
 }
 
 class _InvestmentsScreenState extends State<InvestmentsScreen> {
-  // Sample Data
-  final List<InvestmentRequest> _requests = const [
-    InvestmentRequest(
-      id: 'INV-1001',
-      userName: 'VIGNESH',
-      userEmail: 'vignesh2026@gmail.com',
-      assetType: '24K GOLD ASSET',
-      weightGrams: '0.000 GRAMS',
-      amount: '₹1,26,000.93',
-      yieldRate: 'YIELD: 12.5% ANNUAL',
-      paymentMode: 'BANK TRANSFER',
-      utrNumber: '9283746501',
-      submittedTime: '24 AUG AT 02:15 PM',
-      receiptImageUrl: 'https://picsum.photos/seed/vignesh_receipt/600/800',
-    ),
-    InvestmentRequest(
-      id: 'INV-1002',
-      userName: 'PASUBATHI.M',
-      userEmail: 'pasubathi.m@gmail.com',
-      assetType: '24K GOLD ASSET',
-      weightGrams: '17.000 GRAMS',
-      amount: '₹3,57,002.84',
-      yieldRate: 'YIELD: 12.5% ANNUAL',
-      paymentMode: 'BANK TRANSFER',
-      utrNumber: '2134098752',
-      submittedTime: '23 AUG AT 06:40 PM',
-      receiptImageUrl: 'https://picsum.photos/seed/pasubathi_receipt/600/800',
-    ),
-    InvestmentRequest(
-      id: 'INV-1003',
-      userName: 'SUGANYA NATARAJAN',
-      userEmail: 'suganya.nat@gmail.com',
-      assetType: '24K GOLD ASSET',
-      weightGrams: '0.000 GRAMS',
-      amount: '₹1,68,001.24',
-      yieldRate: 'YIELD: 12.5% ANNUAL',
-      paymentMode: 'BANK TRANSFER',
-      utrNumber: '8743659120',
-      submittedTime: '22 AUG AT 09:10 AM',
-      receiptImageUrl: 'https://picsum.photos/seed/suganya_receipt/600/800',
-    ),
-  ];
+  final InvestmentService _service = InvestmentService.instance;
+
+  List<InvestmentRequest> _requests = [];
+  bool _loading = true;
+  String? _error;
+  final Set<int> _actioningIds = {}; // ids currently being approved/rejected
+
+  String _query = '';
+
+  @override
+  void initState() {
+    super.initState();
+    _loadPending();
+  }
+
+  // --------------------------------------------------------------------------
+  // DATA LOADING
+  // --------------------------------------------------------------------------
+  Future<void> _loadPending({bool silent = false}) async {
+    if (!silent) {
+      setState(() {
+        _loading = true;
+        _error = null;
+      });
+    }
+
+    final response = await _service.fetchPending();
+
+    if (!mounted) return;
+
+    if (response.success && response.data != null) {
+      setState(() {
+        _requests = response.data!;
+        _loading = false;
+        _error = null;
+      });
+    } else {
+      setState(() {
+        _loading = false;
+        _error = response.message ?? 'Unable to load investment requests.';
+      });
+    }
+  }
+
+  List<InvestmentRequest> get _filteredRequests {
+    if (_query.trim().isEmpty) return _requests;
+    final q = _query.trim().toLowerCase();
+    return _requests.where((r) {
+      return r.userName.toLowerCase().contains(q) ||
+          r.userEmail.toLowerCase().contains(q) ||
+          r.transactionId.toLowerCase().contains(q) ||
+          r.displayAssetLabel.toLowerCase().contains(q);
+    }).toList();
+  }
 
   // --------------------------------------------------------------------------
   // RECEIPT VIEWER MODAL
   // --------------------------------------------------------------------------
   void _openReceiptViewer(BuildContext context, InvestmentRequest request) {
+    final receiptUrl = request.receiptImageUrl;
+    if (receiptUrl == null) {
+      ToastService.show(
+        title: 'No Receipt Available',
+        message: 'This request has no uploaded payment receipt.',
+        type: ToastType.error,
+      );
+      return;
+    }
+
     showDialog(
       context: context,
       barrierColor: Colors.black.withOpacity(0.85),
       builder: (context) {
         return Dialog(
-          insetPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 24),
+          insetPadding:
+              const EdgeInsets.symmetric(horizontal: 16, vertical: 24),
           backgroundColor: Colors.transparent,
           child: Stack(
             clipBehavior: Clip.none,
             children: [
-              // Image Container
               Container(
                 width: double.infinity,
                 constraints: BoxConstraints(
@@ -89,12 +113,16 @@ class _InvestmentsScreenState extends State<InvestmentsScreen> {
                 child: ClipRRect(
                   borderRadius: BorderRadius.circular(20),
                   child: Image.network(
-                    request.receiptImageUrl,
-                    fit: BoxFit.cover,
+                    receiptUrl,
+                    fit: BoxFit.contain,
+                    // Upload files are served without CORS headers, so on web load
+                    // them through an <img> element, which the browser doesn't block.
+                    webHtmlElementStrategy: WebHtmlElementStrategy.prefer,
                     loadingBuilder: (context, child, loadingProgress) {
                       if (loadingProgress == null) return child;
                       return const Center(
-                        child: CircularProgressIndicator(color: AppColors.kPrimary),
+                        child: CircularProgressIndicator(
+                            color: AppColors.kPrimary),
                       );
                     },
                     errorBuilder: (context, error, stackTrace) => const Center(
@@ -109,8 +137,6 @@ class _InvestmentsScreenState extends State<InvestmentsScreen> {
                   ),
                 ),
               ),
-
-              // Top Right Close Button Icon
               Positioned(
                 top: -12,
                 right: -12,
@@ -146,7 +172,7 @@ class _InvestmentsScreenState extends State<InvestmentsScreen> {
   }
 
   // --------------------------------------------------------------------------
-  // CONFIRMATION DIALOG & TOAST HANDLERS
+  // CRUD ACTION HANDLERS (approve / reject against the real database)
   // --------------------------------------------------------------------------
   Future<void> _handleAuthorize(InvestmentRequest request) async {
     final confirmed = await AppConfirmDialog.show(
@@ -158,11 +184,27 @@ class _InvestmentsScreenState extends State<InvestmentsScreen> {
       confirmButtonColor: AppColors.kPrimary,
     );
 
-    if (confirmed == true && mounted) {
+    if (confirmed != true || !mounted) return;
+
+    setState(() => _actioningIds.add(request.id));
+
+    final response = await _service.approve(request.id);
+
+    if (!mounted) return;
+    setState(() => _actioningIds.remove(request.id));
+
+    if (response.success) {
+      setState(() => _requests.removeWhere((r) => r.id == request.id));
       ToastService.show(
         title: 'Investment Approved',
         message: 'Activated gold request for ${request.userName}',
         type: ToastType.success,
+      );
+    } else {
+      ToastService.show(
+        title: 'Approval Failed',
+        message: response.message ?? 'Could not approve this request.',
+        type: ToastType.error,
       );
     }
   }
@@ -177,10 +219,26 @@ class _InvestmentsScreenState extends State<InvestmentsScreen> {
       confirmButtonColor: AppColors.kDanger,
     );
 
-    if (confirmed == true && mounted) {
+    if (confirmed != true || !mounted) return;
+
+    setState(() => _actioningIds.add(request.id));
+
+    final response = await _service.reject(request.id);
+
+    if (!mounted) return;
+    setState(() => _actioningIds.remove(request.id));
+
+    if (response.success) {
+      setState(() => _requests.removeWhere((r) => r.id == request.id));
       ToastService.show(
         title: 'Request Rejected',
         message: 'Rejected asset submission for ${request.userName}',
+        type: ToastType.error,
+      );
+    } else {
+      ToastService.show(
+        title: 'Rejection Failed',
+        message: response.message ?? 'Could not reject this request.',
         type: ToastType.error,
       );
     }
@@ -188,169 +246,232 @@ class _InvestmentsScreenState extends State<InvestmentsScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final filtered = _filteredRequests;
+
     return Container(
       color: const Color(0xFFF4F6FB),
-      child: SingleChildScrollView(
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            // Search Bar
-            Container(
-              decoration: BoxDecoration(
-                color: Colors.white,
-                borderRadius: BorderRadius.circular(14),
-                boxShadow: [
-                  BoxShadow(
-                    color: Colors.black.withOpacity(0.03),
-                    blurRadius: 10,
-                    offset: const Offset(0, 2),
+      child: RefreshIndicator(
+        color: AppColors.kPrimary,
+        onRefresh: () => _loadPending(silent: true),
+        child: SingleChildScrollView(
+          physics: const AlwaysScrollableScrollPhysics(),
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              // Search Bar
+              Container(
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(14),
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.black.withOpacity(0.03),
+                      blurRadius: 10,
+                      offset: const Offset(0, 2),
+                    ),
+                  ],
+                ),
+                child: TextField(
+                  onChanged: (value) => setState(() => _query = value),
+                  decoration: const InputDecoration(
+                    hintText: 'Search users, orders, assets...',
+                    hintStyle:
+                        TextStyle(fontSize: 13, color: AppColors.kTextMuted),
+                    prefixIcon: Icon(Icons.search, color: AppColors.kTextMuted),
+                    border: InputBorder.none,
+                    contentPadding: EdgeInsets.symmetric(vertical: 14),
                   ),
-                ],
-              ),
-              child: const TextField(
-                decoration: InputDecoration(
-                  hintText: 'Search users, orders, assets...',
-                  hintStyle: TextStyle(fontSize: 13, color: AppColors.kTextMuted),
-                  prefixIcon: Icon(Icons.search, color: AppColors.kTextMuted),
-                  border: InputBorder.none,
-                  contentPadding: EdgeInsets.symmetric(vertical: 14),
                 ),
               ),
-            ),
 
-            const SizedBox(height: 16),
+              const SizedBox(height: 16),
 
-            // Processor Status Banner
-            Container(
-              width: double.infinity,
-              padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 16),
-              decoration: BoxDecoration(
-                color: const Color(0xFF8BA2CE),
-                borderRadius: BorderRadius.circular(30),
+              // Processor Status Banner
+              Container(
+                width: double.infinity,
+                padding:
+                    const EdgeInsets.symmetric(vertical: 12, horizontal: 16),
+                decoration: BoxDecoration(
+                  color: const Color(0xFF8BA2CE),
+                  borderRadius: BorderRadius.circular(30),
+                ),
+                child: const Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Icon(Icons.verified_outlined,
+                        color: Colors.white, size: 16),
+                    SizedBox(width: 8),
+                    Text(
+                      'PROCESSOR ONLINE • 24/7 AUTO VERIFY',
+                      style: TextStyle(
+                        color: Colors.white,
+                        fontSize: 11,
+                        fontWeight: FontWeight.w800,
+                        letterSpacing: 0.6,
+                      ),
+                    ),
+                  ],
+                ),
               ),
-              child: const Row(
-                mainAxisAlignment: MainAxisAlignment.center,
+
+              const SizedBox(height: 24),
+
+              // Header Title Section
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Icon(Icons.verified_outlined, color: Colors.white, size: 16),
-                  SizedBox(width: 8),
-                  Text(
-                    'PROCESSOR ONLINE • 24/7 AUTO VERIFY',
-                    style: TextStyle(
-                      color: Colors.white,
-                      fontSize: 11,
-                      fontWeight: FontWeight.w800,
-                      letterSpacing: 0.6,
+                  const Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          'PENDING GOLD REQUESTS',
+                          style: TextStyle(
+                            fontSize: 18,
+                            fontWeight: FontWeight.w900,
+                            fontStyle: FontStyle.italic,
+                            color: AppColors.kPrimary,
+                            letterSpacing: 0.5,
+                          ),
+                        ),
+                        SizedBox(height: 4),
+                        Text(
+                          'REVIEW AND APPROVE CUSTOMER INVESTMENT SUBMISSIONS',
+                          style: TextStyle(
+                            fontSize: 10,
+                            fontWeight: FontWeight.bold,
+                            color: AppColors.kTextMuted,
+                            height: 1.3,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Container(
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFFFF7E6),
+                      borderRadius: BorderRadius.circular(20),
+                      border: Border.all(color: const Color(0xFFFFE0B2)),
+                    ),
+                    child: Column(
+                      children: [
+                        Text(
+                          '${_requests.length}',
+                          style: const TextStyle(
+                            fontSize: 14,
+                            fontWeight: FontWeight.w900,
+                            color: Color(0xFFC59B27),
+                          ),
+                        ),
+                        const Text(
+                          'PENDING',
+                          style: TextStyle(
+                            fontSize: 8,
+                            fontWeight: FontWeight.bold,
+                            color: Color(0xFFC59B27),
+                          ),
+                        ),
+                      ],
                     ),
                   ),
                 ],
               ),
-            ),
 
-            const SizedBox(height: 24),
+              const SizedBox(height: 20),
 
-            // Header Title Section
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                const Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        'PENDING GOLD REQUESTS',
-                        style: TextStyle(
-                          fontSize: 18,
-                          fontWeight: FontWeight.w900,
-                          fontStyle: FontStyle.italic,
-                          color: AppColors.kPrimary,
-                          letterSpacing: 0.5,
-                        ),
-                      ),
-                      SizedBox(height: 4),
-                      Text(
-                        'REVIEW AND APPROVE CUSTOMER INVESTMENT SUBMISSIONS',
-                        style: TextStyle(
-                          fontSize: 10,
-                          fontWeight: FontWeight.bold,
-                          color: AppColors.kTextMuted,
-                          height: 1.3,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-                const SizedBox(width: 12), // Added safe spacing
-                Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                  decoration: BoxDecoration(
-                    color: const Color(0xFFFFF7E6),
-                    borderRadius: BorderRadius.circular(20),
-                    border: Border.all(color: const Color(0xFFFFE0B2)),
-                  ),
-                  child: const Column(
-                    children: [
-                      Text(
-                        '32',
-                        style: TextStyle(
-                          fontSize: 14,
-                          fontWeight: FontWeight.w900,
-                          color: Color(0xFFC59B27),
-                        ),
-                      ),
-                      Text(
-                        'PENDING',
-                        style: TextStyle(
-                          fontSize: 8,
-                          fontWeight: FontWeight.bold,
-                          color: Color(0xFFC59B27),
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ],
-            ),
+              _buildBody(filtered),
 
-            const SizedBox(height: 20),
-
-            // Request Cards List
-            ListView.separated(
-              physics: const NeverScrollableScrollPhysics(),
-              shrinkWrap: true,
-              itemCount: _requests.length,
-              separatorBuilder: (context, index) => const SizedBox(height: 20),
-              itemBuilder: (context, index) {
-                final request = _requests[index];
-                return _InvestmentCard(
-                  request: request,
-                  onVerifyReceipt: () => _openReceiptViewer(context, request),
-                  onAuthorize: () => _handleAuthorize(request),
-                  onReject: () => _handleReject(request),
-                );
-              },
-            ),
-
-            const SizedBox(height: 24),
-          ],
+              const SizedBox(height: 24),
+            ],
+          ),
         ),
       ),
+    );
+  }
+
+  Widget _buildBody(List<InvestmentRequest> filtered) {
+    if (_loading) {
+      return const Padding(
+        padding: EdgeInsets.symmetric(vertical: 60),
+        child: Center(child: AppLoader()),
+      );
+    }
+
+    if (_error != null) {
+      return Padding(
+        padding: const EdgeInsets.symmetric(vertical: 40),
+        child: Column(
+          children: [
+            const Icon(Icons.error_outline_rounded,
+                color: AppColors.kDanger, size: 32),
+            const SizedBox(height: 12),
+            Text(
+              _error!,
+              textAlign: TextAlign.center,
+              style: const TextStyle(color: AppColors.kTextMuted, fontSize: 13),
+            ),
+            const SizedBox(height: 16),
+            OutlinedButton(
+              onPressed: () => _loadPending(),
+              child: const Text('Retry'),
+            ),
+          ],
+        ),
+      );
+    }
+
+    if (filtered.isEmpty) {
+      return Padding(
+        padding: const EdgeInsets.symmetric(vertical: 60),
+        child: Center(
+          child: Text(
+            _requests.isEmpty
+                ? 'No pending investment requests.'
+                : 'No requests match your search.',
+            style: const TextStyle(color: AppColors.kTextMuted, fontSize: 13),
+          ),
+        ),
+      );
+    }
+
+    return ListView.separated(
+      physics: const NeverScrollableScrollPhysics(),
+      shrinkWrap: true,
+      itemCount: filtered.length,
+      separatorBuilder: (context, index) => const SizedBox(height: 20),
+      itemBuilder: (context, index) {
+        final request = filtered[index];
+        final isBusy = _actioningIds.contains(request.id);
+        return _InvestmentCard(
+          request: request,
+          isBusy: isBusy,
+          onVerifyReceipt: () => _openReceiptViewer(context, request),
+          onAuthorize: () => _handleAuthorize(request),
+          onReject: () => _handleReject(request),
+        );
+      },
     );
   }
 }
 
 // ============================================================================
-// INVESTMENT CARD COMPONENT (Refactored for Responsiveness & Cleanliness)
+// INVESTMENT CARD COMPONENT
 // ============================================================================
 class _InvestmentCard extends StatelessWidget {
   final InvestmentRequest request;
+  final bool isBusy;
   final VoidCallback onVerifyReceipt;
   final VoidCallback onAuthorize;
   final VoidCallback onReject;
 
   const _InvestmentCard({
     required this.request,
+    required this.isBusy,
     required this.onVerifyReceipt,
     required this.onAuthorize,
     required this.onReject,
@@ -380,8 +501,6 @@ class _InvestmentCard extends StatelessWidget {
         children: [
           _buildIdentitySection(),
           const SizedBox(height: 20),
-          
-          // Row with Expanded keeps Asset & Financial side-by-side cleanly
           Row(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
@@ -390,26 +509,18 @@ class _InvestmentCard extends StatelessWidget {
               Expanded(child: _buildFinancialSection()),
             ],
           ),
-          
           const SizedBox(height: 20),
           _buildPaymentSection(),
-          
           const SizedBox(height: 24),
           _buildActionButtons(),
-          
           const SizedBox(height: 20),
           const Divider(height: 1, color: Color(0xFFF1F5F9)),
           const SizedBox(height: 16),
-          
           _buildFooterTags(),
         ],
       ),
     );
   }
-
-  // ===========================================================================
-  // SECTION BUILDERS
-  // ===========================================================================
 
   Widget _buildIdentitySection() {
     return Column(
@@ -423,7 +534,9 @@ class _InvestmentCard extends StatelessWidget {
               radius: 22,
               backgroundColor: AppColors.kPrimary,
               child: Text(
-                request.userName.characters.first.toUpperCase(),
+                request.userName.isNotEmpty
+                    ? request.userName.characters.first.toUpperCase()
+                    : '?',
                 style: const TextStyle(
                   color: Colors.white,
                   fontWeight: FontWeight.bold,
@@ -473,7 +586,7 @@ class _InvestmentCard extends StatelessWidget {
         _buildSectionLabel('ENTITLED ASSET'),
         const SizedBox(height: 8),
         Text(
-          request.assetType,
+          request.displayAssetLabel,
           style: const TextStyle(
             fontSize: 14,
             fontWeight: FontWeight.w900,
@@ -483,10 +596,11 @@ class _InvestmentCard extends StatelessWidget {
         const SizedBox(height: 4),
         Row(
           children: [
-            const Icon(Icons.workspace_premium_outlined, size: 14, color: _goldColor),
+            const Icon(Icons.workspace_premium_outlined,
+                size: 14, color: _goldColor),
             const SizedBox(width: 4),
             Text(
-              request.weightGrams,
+              request.weightDisplay,
               style: const TextStyle(
                 fontSize: 12,
                 fontWeight: FontWeight.bold,
@@ -505,12 +619,11 @@ class _InvestmentCard extends StatelessWidget {
       children: [
         _buildSectionLabel('FINANCIAL MATRIX'),
         const SizedBox(height: 8),
-        // FittedBox prevents text overflow if the amount string is very long
         FittedBox(
           fit: BoxFit.scaleDown,
           alignment: Alignment.centerLeft,
           child: Text(
-            request.amount,
+            request.amountDisplay,
             style: const TextStyle(
               fontSize: 20,
               fontWeight: FontWeight.w900,
@@ -520,7 +633,7 @@ class _InvestmentCard extends StatelessWidget {
         ),
         const SizedBox(height: 4),
         Text(
-          request.yieldRate,
+          request.dailyPayoutDisplay,
           style: const TextStyle(
             fontSize: 11,
             fontWeight: FontWeight.bold,
@@ -548,9 +661,9 @@ class _InvestmentCard extends StatelessWidget {
               children: [
                 _buildSectionLabel('PAYMENT MODE'),
                 const SizedBox(height: 6),
-                Text(
-                  request.paymentMode,
-                  style: const TextStyle(
+                const Text(
+                  'BANK TRANSFER',
+                  style: TextStyle(
                     fontSize: 12,
                     fontWeight: FontWeight.bold,
                     color: _goldColor,
@@ -558,7 +671,7 @@ class _InvestmentCard extends StatelessWidget {
                 ),
                 const SizedBox(height: 2),
                 Text(
-                  'UTR: ${request.utrNumber}',
+                  'UTR: ${request.utrDisplay}',
                   style: const TextStyle(
                     fontSize: 12,
                     fontWeight: FontWeight.bold,
@@ -614,15 +727,24 @@ class _InvestmentCard extends StatelessWidget {
                 borderRadius: BorderRadius.circular(14),
               ),
             ),
-            onPressed: onAuthorize,
-            child: const Text(
-              'AUTHORIZE ACTIVATION',
-              style: TextStyle(
-                fontSize: 12,
-                fontWeight: FontWeight.w800,
-                letterSpacing: 0.5,
-              ),
-            ),
+            onPressed: isBusy ? null : onAuthorize,
+            child: isBusy
+                ? const SizedBox(
+                    height: 16,
+                    width: 16,
+                    child: CircularProgressIndicator(
+                      strokeWidth: 2,
+                      color: Colors.white,
+                    ),
+                  )
+                : const Text(
+                    'AUTHORIZE ACTIVATION',
+                    style: TextStyle(
+                      fontSize: 12,
+                      fontWeight: FontWeight.w800,
+                      letterSpacing: 0.5,
+                    ),
+                  ),
           ),
         ),
         const SizedBox(height: 12),
@@ -637,7 +759,7 @@ class _InvestmentCard extends StatelessWidget {
                 borderRadius: BorderRadius.circular(14),
               ),
             ),
-            onPressed: onReject,
+            onPressed: isBusy ? null : onReject,
             child: const Text(
               'REJECT ASSET REQUEST',
               style: TextStyle(
@@ -658,10 +780,11 @@ class _InvestmentCard extends StatelessWidget {
       children: [
         Row(
           children: [
-            const Icon(Icons.access_time_rounded, size: 14, color: AppColors.kTextMuted),
+            const Icon(Icons.access_time_rounded,
+                size: 14, color: AppColors.kTextMuted),
             const SizedBox(width: 6),
             Text(
-              'SUBMITTED: ${request.submittedTime}',
+              'SUBMITTED: ${request.submittedTimeDisplay}',
               style: const TextStyle(
                 fontSize: 11,
                 fontWeight: FontWeight.w700,
@@ -671,8 +794,6 @@ class _InvestmentCard extends StatelessWidget {
           ],
         ),
         const SizedBox(height: 12),
-        
-        // Wrap prevents right-overflow on small devices
         Wrap(
           spacing: 8,
           runSpacing: 8,
@@ -683,21 +804,11 @@ class _InvestmentCard extends StatelessWidget {
               _goldColor,
               Icons.hourglass_top_rounded,
             ),
-            _buildStatusBadge(
-              'ID VERIFIED',
-              const Color(0xFFF0F7FF),
-              const Color(0xFF1D4ED8),
-              Icons.verified_user_outlined,
-            ),
           ],
         ),
       ],
     );
   }
-
-  // ===========================================================================
-  // HELPER COMPONENTS
-  // ===========================================================================
 
   Widget _buildSectionLabel(String title) {
     return Text(
@@ -711,7 +822,8 @@ class _InvestmentCard extends StatelessWidget {
     );
   }
 
-  Widget _buildStatusBadge(String text, Color bgColor, Color textColor, IconData icon) {
+  Widget _buildStatusBadge(
+      String text, Color bgColor, Color textColor, IconData icon) {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
       decoration: BoxDecoration(

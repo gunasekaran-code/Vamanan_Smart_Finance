@@ -1,10 +1,20 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart' show Clipboard, ClipboardData;
+import 'package:intl/intl.dart';
 import 'package:frontend/core/theme/app_theme.dart';
 import 'package:frontend/shared/widgets/app_page.dart';
 import 'package:frontend/shared/widgets/app_toast.dart';
+import '../../models/auditor_referral_model.dart';
+import '../../services/auditor_referral_service.dart';
+import 'referral_tree_widget.dart';
+import 'package:frontend/shared/widgets/app_loader.dart';
 
 class AuditorReferralScreen extends StatefulWidget {
-  const AuditorReferralScreen({super.key});
+  // Wire this to however your app currently identifies the logged-in user
+  // (session/provider/auth service) at the call site.
+  final String userId;
+
+  const AuditorReferralScreen({super.key, required this.userId});
 
   @override
   State<AuditorReferralScreen> createState() => _AuditorReferralScreenState();
@@ -17,8 +27,29 @@ class _AuditorReferralScreenState extends State<AuditorReferralScreen> {
   final Color _lightBorder = const Color(0xFFF1F5F9);
   final Color _lightBg = const Color(0xFFF8FAFC);
 
+  final _currency = NumberFormat('#,##0', 'en_IN');
+
+  late Future<ReferralSummary> _future;
+
+  @override
+  void initState() {
+    super.initState();
+    _future = ReferralService.instance.fetchSummary(widget.userId);
+  }
+
+  Future<void> _reload() async {
+    setState(() {
+      _future = ReferralService.instance.fetchSummary(widget.userId);
+    });
+    await _future.catchError((_) => ReferralSummary.empty());
+  }
+
+  String _money(double v) => '₹${_currency.format(v)}';
+
   // --- ACTIONS ---
-  void _handleCopyLink() {
+  void _handleCopyLink(String referralCode) {
+    final link = 'https://www.vamananenterprisesv.com/register?ref=$referralCode';
+    Clipboard.setData(ClipboardData(text: link));
     ToastService.show(
       title: 'Link Copied',
       message: 'Your referral link has been copied to the clipboard.',
@@ -44,42 +75,60 @@ class _AuditorReferralScreenState extends State<AuditorReferralScreen> {
       children: [
         Center(
           child: Container(
-            constraints: const BoxConstraints(maxWidth: 800), // Desktop/Tablet constraint
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                // 1. HEADER
-                Text(
-                  'REFERRAL NETWORK',
-                  style: TextStyle(color: _navyBlue, fontSize: 26, fontWeight: FontWeight.w900, fontStyle: FontStyle.italic, letterSpacing: -1.0),
-                ),
-                const SizedBox(height: 4),
-                Text(
-                  'YOUR REFERRAL NETWORK & EARNINGS',
-                  style: TextStyle(color: _slateText, fontSize: 10, fontWeight: FontWeight.w900, fontStyle: FontStyle.italic, letterSpacing: 1.0),
-                ),
-                const SizedBox(height: 32),
+                        constraints: const BoxConstraints(maxWidth: 800), 
+            child: FutureBuilder<ReferralSummary>(
+              future: _future,
+              builder: (context, snapshot) {
+                if (snapshot.connectionState != ConnectionState.done) {
+                  return const Padding(
+                    padding: EdgeInsets.symmetric(vertical: 120),
+                    child: Center(child: AppLoader()),
+                  );
+                }
 
-                // 2. MAIN REFERRAL CARD
-                _buildMainReferralCard(),
-                const SizedBox(height: 24),
+                if (snapshot.hasError) {
+                  return _buildErrorState(snapshot.error.toString());
+                }
 
-                // 3. STATS GRID (2x2)
-                _buildStatsGrid(isMobile),
-                const SizedBox(height: 24),
+                final data = snapshot.data ?? ReferralSummary.empty();
 
-                // 4. EARNINGS STRUCTURE CARD
-                _buildEarningsStructureCard(),
-                const SizedBox(height: 24),
+                return Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    // 1. HEADER
+                    Text(
+                      'REFERRAL NETWORK',
+                      style: TextStyle(color: _navyBlue, fontSize: 26, fontWeight: FontWeight.w900, fontStyle: FontStyle.italic, letterSpacing: -1.0),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      'YOUR REFERRAL NETWORK & EARNINGS',
+                      style: TextStyle(color: _slateText, fontSize: 10, fontWeight: FontWeight.w900, fontStyle: FontStyle.italic, letterSpacing: 1.0),
+                    ),
+                    const SizedBox(height: 32),
 
-                // 5. COMMISSION RULES CARD
-                _buildCommissionRulesCard(),
-                const SizedBox(height: 24),
+                    // 2. MAIN REFERRAL CARD
+                    _buildMainReferralCard(data),
+                    const SizedBox(height: 24),
 
-                // 6. DIRECT MEMBERS LIST
-                _buildDirectMembersCard(),
-                const SizedBox(height: 40),
-              ],
+                    // 3. STATS GRID (2x2)
+                    _buildStatsGrid(isMobile, data),
+                    const SizedBox(height: 24),
+
+                    // 4. EARNINGS STRUCTURE CARD
+                    _buildEarningsStructureCard(data),
+                    const SizedBox(height: 24),
+
+                    // 5. COMMISSION RULES CARD
+                    _buildCommissionRulesCard(data),
+                    const SizedBox(height: 24),
+
+                    // 6. REFERRAL TREE (genealogy, L1–L5)
+                    ReferralTreeWidget(userId: widget.userId, commissionRate: data.commissionRate),
+                    const SizedBox(height: 40),
+                  ],
+                );
+              },
             ),
           ),
         ),
@@ -87,10 +136,40 @@ class _AuditorReferralScreenState extends State<AuditorReferralScreen> {
     );
   }
 
+  Widget _buildErrorState(String message) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 80),
+      child: Column(
+        children: [
+          Icon(Icons.error_outline, size: 40, color: _slateText),
+          const SizedBox(height: 12),
+          Text(
+            'COULD NOT LOAD REFERRAL DATA',
+            style: TextStyle(color: _navyBlue, fontSize: 12, fontWeight: FontWeight.w900, fontStyle: FontStyle.italic, letterSpacing: 1.0),
+          ),
+          const SizedBox(height: 6),
+          Text(message, style: TextStyle(color: _slateText, fontSize: 11), textAlign: TextAlign.center),
+          const SizedBox(height: 16),
+          OutlinedButton(onPressed: _reload, child: const Text('RETRY')),
+        ],
+      ),
+    );
+  }
+
   // ==========================================================================
   // 1. MAIN REFERRAL CARD
   // ==========================================================================
-  Widget _buildMainReferralCard() {
+  Widget _buildMainReferralCard(ReferralSummary data) {
+    final code = data.referralCode;
+    final codeHead = code.length >= 3 ? code.substring(0, 3) : code;
+    final codeTail = code.length >= 3 ? code.substring(3) : '';
+    final capPct = ((data.totalNetworkEarnings + data.userInvestment > 0 &&
+                data.userInvestment > 0)
+            ? ((data.totalNetworkEarnings / data.userInvestment) * 100)
+                .clamp(0, 100)
+            : 0)
+        .toStringAsFixed(0);
+
     return Container(
       decoration: BoxDecoration(
         color: Colors.white,
@@ -100,19 +179,16 @@ class _AuditorReferralScreenState extends State<AuditorReferralScreen> {
       ),
       child: Stack(
         children: [
-          // Background Watermark (Network Nodes)
           Positioned(
             right: 20,
             top: 40,
             child: Icon(Icons.hub_outlined, size: 140, color: const Color(0xFFF1F5F9).withOpacity(0.5)),
           ),
-          
           Padding(
             padding: const EdgeInsets.all(32.0),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                // Top Tag
                 Container(
                   padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
                   decoration: BoxDecoration(color: AppColors.goldBadgeBg, borderRadius: BorderRadius.circular(16)),
@@ -126,28 +202,26 @@ class _AuditorReferralScreenState extends State<AuditorReferralScreen> {
                   ),
                 ),
                 const SizedBox(height: 24),
-                
-                // Referral Code Text
+
                 const Text('YOUR REFERRAL CODE', style: TextStyle(color: Color(0xFFCBD5E1), fontSize: 10, fontWeight: FontWeight.w900, fontStyle: FontStyle.italic, letterSpacing: 1.5)),
                 const SizedBox(height: 4),
                 RichText(
                   text: TextSpan(
                     style: const TextStyle(fontSize: 40, fontWeight: FontWeight.w900, fontStyle: FontStyle.italic, letterSpacing: -1.0, fontFamily: AppColors.fontFamily),
                     children: [
-                      const TextSpan(text: 'VEV', style: TextStyle(color: AppColors.goldColor)),
-                      TextSpan(text: '8UOMN', style: TextStyle(color: _navyBlue)),
+                      TextSpan(text: codeHead, style: const TextStyle(color: AppColors.goldColor)),
+                      TextSpan(text: codeTail, style: TextStyle(color: _navyBlue)),
                     ],
                   ),
                 ),
                 const SizedBox(height: 32),
 
-                // Action Buttons
                 Column(
                   children: [
                     SizedBox(
                       width: double.infinity,
                       child: ElevatedButton.icon(
-                        onPressed: _handleCopyLink,
+                        onPressed: () => _handleCopyLink(data.referralCode),
                         icon: const Icon(Icons.copy, size: 16),
                         label: const Text('COPY LINK', style: TextStyle(fontWeight: FontWeight.w900, fontStyle: FontStyle.italic, fontSize: 12, letterSpacing: 1.0)),
                         style: ElevatedButton.styleFrom(
@@ -180,7 +254,6 @@ class _AuditorReferralScreenState extends State<AuditorReferralScreen> {
                 ),
                 const SizedBox(height: 32),
 
-                // Earnings Info Box
                 Container(
                   padding: const EdgeInsets.all(24),
                   decoration: BoxDecoration(
@@ -199,24 +272,24 @@ class _AuditorReferralScreenState extends State<AuditorReferralScreen> {
                         children: [
                           const Text('TOTAL NETWORK EARNINGS (NET)', style: TextStyle(color: Color(0xFF94A3B8), fontSize: 10, fontWeight: FontWeight.w900, fontStyle: FontStyle.italic, letterSpacing: 1.0)),
                           const SizedBox(height: 8),
-                          Text('₹0', style: TextStyle(color: _navyBlue, fontSize: 32, fontWeight: FontWeight.w900, fontStyle: FontStyle.italic)),
+                          Text(_money(data.totalNetworkEarnings), style: TextStyle(color: _navyBlue, fontSize: 32, fontWeight: FontWeight.w900, fontStyle: FontStyle.italic)),
                           const SizedBox(height: 20),
-                          
+
                           Row(
                             children: [
-                              Expanded(child: _buildSubStat('TODAY', '+₹0', AppColors.goldColor)),
-                              Expanded(child: _buildSubStat('MEMBERS', '0', const Color(0xFF3B82F6))),
+                              Expanded(child: _buildSubStat('TODAY', '+${_money(data.todayEarnings)}', AppColors.goldColor)),
+                              Expanded(child: _buildSubStat('MEMBERS', '${data.directCount}', const Color(0xFF3B82F6))),
                             ],
                           ),
                           const SizedBox(height: 24),
                           const Divider(height: 1, thickness: 1.5, color: Color(0xFFE2E8F0)),
                           const SizedBox(height: 24),
-                          
+
                           Row(
                             mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                            children: const [
-                              Text('TOTAL EARNINGS LIMIT', style: TextStyle(color: Color(0xFF1E293B), fontSize: 10, fontWeight: FontWeight.w900, fontStyle: FontStyle.italic, letterSpacing: 0.5)),
-                              Text('0% / 100%', style: TextStyle(color: AppColors.goldColor, fontSize: 10, fontWeight: FontWeight.w900, fontStyle: FontStyle.italic, letterSpacing: 1.0)),
+                            children: [
+                              const Text('TOTAL EARNINGS LIMIT', style: TextStyle(color: Color(0xFF1E293B), fontSize: 10, fontWeight: FontWeight.w900, fontStyle: FontStyle.italic, letterSpacing: 0.5)),
+                              Text('$capPct% / 100%', style: const TextStyle(color: AppColors.goldColor, fontSize: 10, fontWeight: FontWeight.w900, fontStyle: FontStyle.italic, letterSpacing: 1.0)),
                             ],
                           ),
                           const SizedBox(height: 16),
@@ -251,7 +324,9 @@ class _AuditorReferralScreenState extends State<AuditorReferralScreen> {
   // ==========================================================================
   // 2. STATS GRID
   // ==========================================================================
-  Widget _buildStatsGrid(bool isMobile) {
+  Widget _buildStatsGrid(bool isMobile, ReferralSummary data) {
+    final eligibleCount = data.directCount.clamp(0, ReferralSummary.directLinkCap);
+
     return GridView.count(
       shrinkWrap: true,
       physics: const NeverScrollableScrollPhysics(),
@@ -260,10 +335,10 @@ class _AuditorReferralScreenState extends State<AuditorReferralScreen> {
       crossAxisSpacing: 16,
       childAspectRatio: isMobile ? 1.6 : 2.5,
       children: [
-        _buildGridStatCard('DIRECT REFERRALS', '0', Icons.people_outline, AppColors.goldBadgeBg, AppColors.goldColor),
-        _buildGridStatCard('UPCOMING / BONUS', '2% / referral', Icons.percent, const Color(0xFFEFF6FF), const Color(0xFF3B82F6)),
-        _buildGridStatCard('ELIGIBLE / CAP', '0 / 10', Icons.verified_user_outlined, AppColors.goldBadgeBg, AppColors.goldColor),
-        _buildGridStatCard('TOTAL EARNINGS', '₹0', Icons.trending_up, const Color(0xFFEFF6FF), const Color(0xFF3B82F6)),
+        _buildGridStatCard('DIRECT REFERRALS', '${data.directCount}', Icons.people_outline, AppColors.goldBadgeBg, AppColors.goldColor),
+        _buildGridStatCard('UPCOMING / BONUS', '${data.commissionRate} / referral', Icons.percent, const Color(0xFFEFF6FF), const Color(0xFF3B82F6)),
+        _buildGridStatCard('ELIGIBLE / CAP', '$eligibleCount / ${ReferralSummary.directLinkCap}', Icons.verified_user_outlined, AppColors.goldBadgeBg, AppColors.goldColor),
+        _buildGridStatCard('TOTAL EARNINGS', _money(data.totalNetworkEarnings), Icons.trending_up, const Color(0xFFEFF6FF), const Color(0xFF3B82F6)),
       ],
     );
   }
@@ -301,7 +376,7 @@ class _AuditorReferralScreenState extends State<AuditorReferralScreen> {
   // ==========================================================================
   // 3. EARNINGS STRUCTURE CARD
   // ==========================================================================
-  Widget _buildEarningsStructureCard() {
+  Widget _buildEarningsStructureCard(ReferralSummary data) {
     return Container(
       padding: const EdgeInsets.all(32),
       decoration: BoxDecoration(
@@ -318,39 +393,35 @@ class _AuditorReferralScreenState extends State<AuditorReferralScreen> {
           Text('SIMPLE & FLAT — YOU EARN ON YOUR OWN PURCHASE AND A BONUS ON EVERY DIRECT REFERRAL', style: TextStyle(color: _slateText, fontSize: 9, fontWeight: FontWeight.w900, fontStyle: FontStyle.italic, letterSpacing: 1.0, height: 1.5)),
           const SizedBox(height: 32),
 
-          // Diagram Start
-          // Top Block (Navy)
           Container(
             width: double.infinity,
             padding: const EdgeInsets.symmetric(vertical: 24),
             decoration: BoxDecoration(color: _navyBlue, borderRadius: BorderRadius.circular(16)),
             child: Column(
-              children: const [
-                Text('YOU', style: TextStyle(color: Colors.white70, fontSize: 10, fontWeight: FontWeight.w900, fontStyle: FontStyle.italic, letterSpacing: 2.0)),
-                SizedBox(height: 6),
-                Text('2% DAILY CASHBACK', style: TextStyle(color: AppColors.goldColor, fontSize: 16, fontWeight: FontWeight.w900, fontStyle: FontStyle.italic)),
+              children: [
+                const Text('YOU', style: TextStyle(color: Colors.white70, fontSize: 10, fontWeight: FontWeight.w900, fontStyle: FontStyle.italic, letterSpacing: 2.0)),
+                const SizedBox(height: 6),
+                Text('${data.dailyCashbackRate} DAILY CASHBACK', style: const TextStyle(color: AppColors.goldColor, fontSize: 16, fontWeight: FontWeight.w900, fontStyle: FontStyle.italic)),
               ],
             ),
           ),
-          
-          // Connector Line
+
           Center(child: Container(width: 3, height: 24, color: AppColors.goldColor)),
 
-          // Middle Block (Gold)
           Container(
             width: double.infinity,
             padding: const EdgeInsets.all(20),
-            decoration: BoxDecoration(color: const Color(0xFFD97706), borderRadius: BorderRadius.circular(16)), // Rich Gold
+            decoration: BoxDecoration(color: const Color(0xFFD97706), borderRadius: BorderRadius.circular(16)),
             child: Row(
               children: [
                 Expanded(
                   flex: 2,
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
-                    children: const [
-                      Text('DIRECT\nREFERRAL', style: TextStyle(color: Colors.white70, fontSize: 9, fontWeight: FontWeight.w900, fontStyle: FontStyle.italic, letterSpacing: 1.0)),
-                      SizedBox(height: 4),
-                      Text('2% / day', style: TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.w900, fontStyle: FontStyle.italic)),
+                    children: [
+                      const Text('DIRECT\nREFERRAL', style: TextStyle(color: Colors.white70, fontSize: 9, fontWeight: FontWeight.w900, fontStyle: FontStyle.italic, letterSpacing: 1.0)),
+                      const SizedBox(height: 4),
+                      Text('${data.commissionRate} / day', style: const TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.w900, fontStyle: FontStyle.italic)),
                     ],
                   ),
                 ),
@@ -365,15 +436,14 @@ class _AuditorReferralScreenState extends State<AuditorReferralScreen> {
           ),
           const SizedBox(height: 24),
 
-          // Bottom Summary Block (Navy)
           Container(
             width: double.infinity,
             padding: const EdgeInsets.symmetric(vertical: 20, horizontal: 16),
             decoration: BoxDecoration(color: _navyBlue, borderRadius: BorderRadius.circular(12)),
-            child: const Text(
-              'TOTAL POTENTIAL: 2% OWN DAILY CASHBACK + 2% FLAT ON EACH DIRECT REFERRAL',
+            child: Text(
+              'TOTAL POTENTIAL: ${data.dailyCashbackRate} OWN DAILY CASHBACK + ${data.commissionRate} FLAT ON EACH DIRECT REFERRAL',
               textAlign: TextAlign.center,
-              style: TextStyle(color: Colors.white, fontSize: 9, fontWeight: FontWeight.w900, fontStyle: FontStyle.italic, letterSpacing: 1.0, height: 1.5),
+              style: const TextStyle(color: Colors.white, fontSize: 9, fontWeight: FontWeight.w900, fontStyle: FontStyle.italic, letterSpacing: 1.0, height: 1.5),
             ),
           )
         ],
@@ -384,7 +454,9 @@ class _AuditorReferralScreenState extends State<AuditorReferralScreen> {
   // ==========================================================================
   // 4. REFERRAL COMMISSION RULES CARD
   // ==========================================================================
-  Widget _buildCommissionRulesCard() {
+  Widget _buildCommissionRulesCard(ReferralSummary data) {
+    final filled = data.directCount.clamp(0, ReferralSummary.directLinkCap);
+
     return Container(
       padding: const EdgeInsets.all(32),
       decoration: BoxDecoration(
@@ -398,7 +470,7 @@ class _AuditorReferralScreenState extends State<AuditorReferralScreen> {
         children: [
           Text('REFERRAL COMMISSION RULES', style: TextStyle(color: _navyBlue, fontSize: 16, fontWeight: FontWeight.w900, fontStyle: FontStyle.italic, letterSpacing: -0.5)),
           const SizedBox(height: 24),
-          
+
           Row(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
@@ -410,124 +482,54 @@ class _AuditorReferralScreenState extends State<AuditorReferralScreen> {
               const SizedBox(width: 16),
               Expanded(
                 child: Text(
-                  'YOU EARN REFERRAL COMMISSION FROM YOUR FIRST 10 DIRECT MEMBERS. AFTER 10 MEMBERS, REFERRAL COMMISSION STOPS, BUT YOUR OWN DAILY CASHBACK CONTINUES UNTIL YOU REACH THE 100% LIMIT.',
+                  'YOU EARN REFERRAL COMMISSION FROM YOUR FIRST ${ReferralSummary.directLinkCap} DIRECT MEMBERS. AFTER ${ReferralSummary.directLinkCap} MEMBERS, REFERRAL COMMISSION STOPS, BUT YOUR OWN DAILY CASHBACK CONTINUES UNTIL YOU REACH THE 100% LIMIT.',
                   style: TextStyle(color: _slateText, fontSize: 10, fontWeight: FontWeight.w900, fontStyle: FontStyle.italic, letterSpacing: 0.5, height: 1.5),
                 ),
               )
             ],
           ),
           const SizedBox(height: 24),
-          
+
           Container(
             padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
             decoration: BoxDecoration(color: AppColors.goldBadgeBg, borderRadius: BorderRadius.circular(16)),
             child: Row(
               mainAxisSize: MainAxisSize.min,
-              children: const [
-                Icon(Icons.check_circle_outline, color: AppColors.goldColor, size: 12),
-                SizedBox(width: 6),
-                Text('ACTIVE', style: TextStyle(color: AppColors.goldColor, fontSize: 10, fontWeight: FontWeight.w900, fontStyle: FontStyle.italic, letterSpacing: 1.0)),
+              children: [
+                const Icon(Icons.check_circle_outline, color: AppColors.goldColor, size: 12),
+                const SizedBox(width: 6),
+                Text(
+                  data.referralActive ? 'ACTIVE' : 'INACTIVE',
+                  style: const TextStyle(color: AppColors.goldColor, fontSize: 10, fontWeight: FontWeight.w900, fontStyle: FontStyle.italic, letterSpacing: 1.0),
+                ),
               ],
             ),
           ),
           const SizedBox(height: 32),
-          
-          // Progress Section
+
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: const [
-              Text('DIRECT LINK PROGRESS', style: TextStyle(color: Color(0xFF1E293B), fontSize: 10, fontWeight: FontWeight.w900, fontStyle: FontStyle.italic, letterSpacing: 1.0)),
-              Text('0 / 10 ELIGIBLE DIRECT LINKS', style: TextStyle(color: AppColors.goldColor, fontSize: 10, fontWeight: FontWeight.w900, fontStyle: FontStyle.italic, letterSpacing: 0.5)),
+            children: [
+              const Text('DIRECT LINK PROGRESS', style: TextStyle(color: Color(0xFF1E293B), fontSize: 10, fontWeight: FontWeight.w900, fontStyle: FontStyle.italic, letterSpacing: 1.0)),
+              Text('$filled / ${ReferralSummary.directLinkCap} ELIGIBLE DIRECT LINKS', style: const TextStyle(color: AppColors.goldColor, fontSize: 10, fontWeight: FontWeight.w900, fontStyle: FontStyle.italic, letterSpacing: 0.5)),
             ],
           ),
           const SizedBox(height: 12),
-          
-          // Segmented Progress Bar (10 segments)
+
           Row(
-            children: List.generate(10, (index) {
+            children: List.generate(ReferralSummary.directLinkCap, (index) {
               return Expanded(
                 child: Container(
                   height: 6,
                   margin: const EdgeInsets.symmetric(horizontal: 2),
                   decoration: BoxDecoration(
-                    color: index < 0 ? _navyBlue : const Color(0xFFE2E8F0), // Change 0 to dynamic count when hooked to data
+                    color: index < filled ? _navyBlue : const Color(0xFFE2E8F0),
                     borderRadius: BorderRadius.circular(4),
                   ),
                 ),
               );
             }),
           ),
-        ],
-      ),
-    );
-  }
-
-  // ==========================================================================
-  // 5. DIRECT MEMBERS LIST
-  // ==========================================================================
-  Widget _buildDirectMembersCard() {
-    return Container(
-      padding: const EdgeInsets.all(32),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(32),
-        border: Border.all(color: _lightBorder, width: 2),
-        boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.02), blurRadius: 20, offset: const Offset(0, 10))],
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            crossAxisAlignment: CrossAxisAlignment.center,
-            children: [
-              Container(
-                padding: const EdgeInsets.all(12),
-                decoration: BoxDecoration(color: _navyBlue, borderRadius: BorderRadius.circular(12)),
-                child: const Icon(Icons.group_outlined, color: Colors.white, size: 20),
-              ),
-              const SizedBox(width: 16),
-              Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text('DIRECT MEMBERS', style: TextStyle(color: _navyBlue, fontSize: 16, fontWeight: FontWeight.w900, fontStyle: FontStyle.italic, letterSpacing: -0.5)),
-                  const SizedBox(height: 4),
-                  Text('0 DIRECT MEMBERS • 2% FLAT REFERRAL BONUS EACH', style: TextStyle(color: _slateText, fontSize: 9, fontWeight: FontWeight.w900, fontStyle: FontStyle.italic, letterSpacing: 0.5)),
-                ],
-              ),
-            ],
-          ),
-          const SizedBox(height: 24),
-          
-          Row(
-            children: const [
-              Icon(Icons.star, color: AppColors.goldColor, size: 14),
-              SizedBox(width: 8),
-              Text('0 DIRECT MEMBERS', style: TextStyle(color: AppColors.goldColor, fontSize: 11, fontWeight: FontWeight.w900, fontStyle: FontStyle.italic, letterSpacing: 1.0)),
-            ],
-          ),
-          const SizedBox(height: 24),
-          
-          // Empty State
-          Container(
-            width: double.infinity,
-            padding: const EdgeInsets.symmetric(vertical: 60),
-            decoration: BoxDecoration(
-              color: _lightBg,
-              borderRadius: BorderRadius.circular(24),
-              border: Border.all(color: _lightBorder),
-            ),
-            child: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                Icon(Icons.person_search_outlined, size: 48, color: const Color(0xFFCBD5E1).withOpacity(0.5)),
-                const SizedBox(height: 16),
-                Text(
-                  'NO MEMBERS FOUND. EXPAND YOUR NETWORK.',
-                  style: TextStyle(color: const Color(0xFF94A3B8).withOpacity(0.8), fontSize: 10, fontWeight: FontWeight.w900, fontStyle: FontStyle.italic, letterSpacing: 1.0),
-                ),
-              ],
-            ),
-          )
         ],
       ),
     );

@@ -7,6 +7,9 @@ header("Access-Control-Allow-Headers: Content-Type, Authorization");
 
 if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') { exit; }
 
+require_once __DIR__ . '/../config/json_response.php';
+register_json_fatal_handler();
+
 require_once '../config.php';
 $db = $pdo;
 
@@ -68,26 +71,26 @@ if ($method === 'GET') {
         $limit      = min((int)($_GET['limit'] ?? 100), 500);
         $product_id = isset($_GET['product_id']) ? (int)$_GET['product_id'] : null;
 
+        $limit = max(1, $limit);
         if ($product_id) {
             $stmt = $db->prepare(
                 "SELECT sm.*, p.name AS product_name, p.category, p.image
                  FROM stock_movements sm
                  JOIN products p ON sm.product_id = p.id
                  WHERE sm.product_id = ?
-                 ORDER BY sm.created_at DESC LIMIT ?"
+                 ORDER BY sm.created_at DESC LIMIT $limit"
             );
-            $stmt->execute([$product_id, $limit]);
+            $stmt->execute([$product_id]);
         } else {
-            $stmt = $db->prepare(
+            $stmt = $db->query(
                 "SELECT sm.*, p.name AS product_name, p.category, p.image
                  FROM stock_movements sm
                  JOIN products p ON sm.product_id = p.id
-                 ORDER BY sm.created_at DESC LIMIT ?"
+                 ORDER BY sm.created_at DESC LIMIT $limit"
             );
-            $stmt->execute([$limit]);
         }
         $movements = $stmt->fetchAll(PDO::FETCH_ASSOC);
-        echo json_encode(['status' => 'success', 'data' => $movements, 'count' => count($movements)]);
+        send_json(['status' => 'success', 'data' => $movements, 'count' => count($movements)]);
         exit;
     }
 
@@ -101,7 +104,7 @@ if ($method === 'GET') {
              ORDER BY ia.created_at DESC"
         );
         $alerts = $stmt->fetchAll(PDO::FETCH_ASSOC);
-        echo json_encode(['status' => 'success', 'data' => $alerts, 'count' => count($alerts)]);
+        send_json(['status' => 'success', 'data' => $alerts, 'count' => count($alerts)]);
         exit;
     }
 
@@ -168,7 +171,7 @@ if ($method === 'GET') {
     // Distinct categories
     $cats = $db->query("SELECT DISTINCT category FROM products WHERE category IS NOT NULL ORDER BY category")->fetchAll(PDO::FETCH_COLUMN);
 
-    echo json_encode([
+    send_json([
         'status'     => 'success',
         'data'       => $products,
         'summary'    => [
@@ -197,8 +200,7 @@ if ($method === 'POST') {
     $created_by = (int)($data['created_by'] ?? 0) ?: null;
 
     if (!$product_id) {
-        http_response_code(400);
-        echo json_encode(['status' => 'error', 'message' => 'product_id is required.']);
+        send_json(['status' => 'error', 'message' => 'product_id is required.'], 400);
         exit;
     }
 
@@ -208,8 +210,7 @@ if ($method === 'POST') {
     $product = $stmt->fetch(PDO::FETCH_ASSOC);
 
     if (!$product) {
-        http_response_code(404);
-        echo json_encode(['status' => 'error', 'message' => 'Product not found.']);
+        send_json(['status' => 'error', 'message' => 'Product not found.'], 404);
         exit;
     }
 
@@ -222,20 +223,19 @@ if ($method === 'POST') {
         $new_threshold = max(0, (int)($data['threshold'] ?? 10));
         $db->prepare("UPDATE products SET low_stock_threshold = ? WHERE id = ?")->execute([$new_threshold, $product_id]);
         syncAlerts($db, $product_id, $current_qty, $new_threshold);
-        echo json_encode(['status' => 'success', 'message' => 'Low-stock threshold updated.', 'threshold' => $new_threshold]);
+        send_json(['status' => 'success', 'message' => 'Low-stock threshold updated.', 'threshold' => $new_threshold]);
         exit;
     }
 
     // Resolve alert only
     if ($action === 'resolve_alert') {
         $db->prepare("UPDATE inventory_alerts SET is_resolved = 1, resolved_at = NOW() WHERE product_id = ? AND is_resolved = 0")->execute([$product_id]);
-        echo json_encode(['status' => 'success', 'message' => 'Alert resolved.']);
+        send_json(['status' => 'success', 'message' => 'Alert resolved.']);
         exit;
     }
 
     if ($quantity <= 0 && $action !== 'set') {
-        http_response_code(400);
-        echo json_encode(['status' => 'error', 'message' => 'Quantity must be greater than zero.']);
+        send_json(['status' => 'error', 'message' => 'Quantity must be greater than zero.'], 400);
         exit;
     }
 
@@ -267,8 +267,7 @@ if ($method === 'POST') {
             $label         = "Returned";
             break;
         default:
-            http_response_code(400);
-            echo json_encode(['status' => 'error', 'message' => "Unknown action '$action'."]);
+                        send_json(['status' => 'error', 'message' => "Unknown action '$action'."], 400);
             exit;
     }
 
@@ -291,7 +290,7 @@ if ($method === 'POST') {
 
         $stock_status = $new_qty === 0 ? 'out_of_stock' : ($new_qty <= $threshold ? 'low_stock' : 'in_stock');
 
-        echo json_encode([
+        send_json([
             'status'        => 'success',
             'message'       => "$label {$quantity} unit(s). New stock: {$new_qty}.",
             'product_id'    => $product_id,
@@ -304,8 +303,7 @@ if ($method === 'POST') {
 
     } catch (Exception $e) {
         $db->rollBack();
-        http_response_code(500);
-        echo json_encode(['status' => 'error', 'message' => 'DB error: ' . $e->getMessage()]);
+        send_json(['status' => 'error', 'message' => 'DB error: ' . $e->getMessage()], 500);
     }
     exit;
 }
@@ -316,11 +314,10 @@ if ($method === 'POST') {
 if ($method === 'DELETE') {
     $data       = json_decode(file_get_contents('php://input'), true) ?? [];
     $product_id = (int)($data['product_id'] ?? 0);
-    if (!$product_id) { echo json_encode(['status' => 'error', 'message' => 'product_id required']); exit; }
+    if (!$product_id) { send_json(['status' => 'error', 'message' => 'product_id required'], 400); exit; }
     $db->prepare("UPDATE products SET is_active = 0, stock_quantity = 0 WHERE id = ?")->execute([$product_id]);
-    echo json_encode(['status' => 'success', 'message' => 'Product removed from inventory.']);
+    send_json(['status' => 'success', 'message' => 'Product removed from inventory.']);
     exit;
 }
 
-http_response_code(405);
-echo json_encode(['status' => 'error', 'message' => 'Method not allowed.']);
+send_json(['status' => 'error', 'message' => 'Method not allowed.'], 405);

@@ -13,7 +13,6 @@ if (!$db) {
     die(json_encode(["status" => "error", "message" => "Database connection failed"]));
 }
 
-// Ensure database is up to date
 runMigrations($db);
 
 try {

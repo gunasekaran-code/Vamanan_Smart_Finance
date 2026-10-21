@@ -1,14 +1,19 @@
-import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:frontend/core/theme/app_theme.dart';
 import 'package:frontend/core/theme/confirm_dialog.dart';
 import 'package:frontend/shared/widgets/app_page.dart';
 import 'package:frontend/shared/widgets/app_toast.dart';
-import 'package:frontend/shared/widgets/app_upload.dart'; 
+import 'package:frontend/shared/widgets/app_upload.dart';
+import '../../models/auditor_kyc_model.dart';
+import '../../services/auditor_kyc_service.dart';
+import 'package:frontend/shared/widgets/app_loader.dart';
 
 class AuditorKycScreen extends StatefulWidget {
-  const AuditorKycScreen({super.key});
+  // Wire this to however your app currently identifies the logged-in user.
+  final String userId;
+
+  const AuditorKycScreen({super.key, required this.userId});
 
   @override
   State<AuditorKycScreen> createState() => _AuditorKycScreenState();
@@ -26,12 +31,23 @@ class _AuditorKycScreenState extends State<AuditorKycScreen> {
   final TextEditingController _branchCtrl = TextEditingController();
 
   XFile? _uploadedDocument;
+  KycDetails _details = KycDetails.empty();
+
+  bool _loading = true;
+  String? _loadError;
+  bool _submitting = false;
 
   // Exact Colors from the design
   final Color _navyBlue = const Color(0xFF1B233A);
   final Color _lightBorder = const Color(0xFFF1F5F9);
   final Color _lightBg = const Color(0xFFF8FAFC);
   final Color _slateText = const Color(0xFF94A3B8);
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
 
   @override
   void dispose() {
@@ -46,11 +62,38 @@ class _AuditorKycScreenState extends State<AuditorKycScreen> {
     super.dispose();
   }
 
+  Future<void> _load() async {
+    setState(() {
+      _loading = true;
+      _loadError = null;
+    });
+    try {
+      final details = await KycService.instance.fetchDetails(widget.userId);
+      setState(() {
+        _details = details;
+        _phoneCtrl.text = details.phone;
+        _addressCtrl.text = details.address;
+        _aadhaarCtrl.text = details.aadharNo;
+        _panCtrl.text = details.panNo;
+        _bankNameCtrl.text = details.bankName;
+        _accNumCtrl.text = details.accountNo;
+        _ifscCtrl.text = details.ifscCode;
+        _branchCtrl.text = details.branchName;
+        _loading = false;
+      });
+    } catch (e) {
+      setState(() {
+        _loadError = e.toString();
+        _loading = false;
+      });
+    }
+  }
+
   // --- ACTIONS ---
   Future<void> _handleUpload() async {
     final file = await AppUpload.showImagePickerModal(
-      context, 
-      title: 'Upload KYC Document'
+      context,
+      title: 'Upload KYC Document',
     );
     if (file != null) {
       setState(() {
@@ -60,7 +103,7 @@ class _AuditorKycScreenState extends State<AuditorKycScreen> {
   }
 
   Future<void> _handleSubmit() async {
-    if (_uploadedDocument == null) {
+    if (_uploadedDocument == null && !_details.hasDocument) {
       ToastService.show(
         title: 'Missing Document',
         message: 'Please upload your KYC documents before submitting.',
@@ -77,13 +120,48 @@ class _AuditorKycScreenState extends State<AuditorKycScreen> {
       confirmButtonColor: _navyBlue,
     );
 
-    if (confirmed == true) {
+    if (confirmed != true) return;
+
+    setState(() => _submitting = true);
+    try {
+      final updated = await KycService.instance.submitDetails(
+        userId: widget.userId,
+        phone: _phoneCtrl.text.trim(),
+        address: _addressCtrl.text.trim(),
+        aadharNo: _aadhaarCtrl.text.trim(),
+        panNo: _panCtrl.text.trim(),
+        bankName: _bankNameCtrl.text.trim(),
+        accountNo: _accNumCtrl.text.trim(),
+        ifscCode: _ifscCtrl.text.trim(),
+        branchName: _branchCtrl.text.trim(),
+        document: _uploadedDocument,
+      );
+
+      setState(() {
+        // The POST response doesn't echo kyc_document back, so keep whichever
+        // one is now true: a freshly picked file, or the one already on file.
+        _details = updated.copyWith(
+          kycDocument: _uploadedDocument != null
+              ? _uploadedDocument!.name
+              : _details.kycDocument,
+        );
+        _submitting = false;
+      });
+
+      if (!mounted) return;
       ToastService.show(
         title: 'KYC Submitted',
         message: 'Your verification request is being processed. It usually takes 24-48 hours.',
         type: ToastType.success,
       );
-      // Add logic to pop screen or change state here
+    } catch (e) {
+      setState(() => _submitting = false);
+      if (!mounted) return;
+      ToastService.show(
+        title: 'Submission Failed',
+        message: e.toString(),
+        type: ToastType.error,
+      );
     }
   }
 
@@ -94,95 +172,190 @@ class _AuditorKycScreenState extends State<AuditorKycScreen> {
       children: [
         Center(
           child: Container(
-            constraints: const BoxConstraints(maxWidth: 600), // Perfect for mobile & tablet
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                // 1. HEADER
-                Row(
-                  children: const [
-                    Icon(Icons.star, color: AppColors.goldColor, size: 10),
-                    SizedBox(width: 4),
-                    Text('VERIFICATION', style: TextStyle(color: AppColors.goldColor, fontSize: 10, fontWeight: FontWeight.w900, fontStyle: FontStyle.italic, letterSpacing: 2.0)),
-                  ],
-                ),
-                const SizedBox(height: 8),
-                Text('KYC VERIFICATION', style: TextStyle(color: _navyBlue, fontSize: 26, fontWeight: FontWeight.w900, fontStyle: FontStyle.italic, letterSpacing: -0.5)),
-                const SizedBox(height: 4),
-                Text('VERIFY YOUR IDENTITY TO UNLOCK WITHDRAWALS AND REWARDS', style: TextStyle(color: _slateText, fontSize: 9, fontWeight: FontWeight.w900, fontStyle: FontStyle.italic, letterSpacing: 1.0)),
-                const SizedBox(height: 32),
-
-                // 2. PERSONAL DETAILS CARD
-                _buildFormCard(
-                  title: 'PERSONAL DETAILS',
-                  icon: Icons.person_outline,
-                  children: [
-                    _buildInputField('PHONE NUMBER', '+91 00000 00000', Icons.phone_outlined, _phoneCtrl),
-                    _buildInputField('ADDRESS', 'Your full address', Icons.location_on_outlined, _addressCtrl),
-                    _buildInputField('AADHAAR NUMBER', '0000 0000 0000', Icons.fingerprint, _aadhaarCtrl),
-                    _buildInputField('PAN NUMBER', 'ABCDE1234F', Icons.badge_outlined, _panCtrl),
-                  ],
-                ),
-                const SizedBox(height: 24),
-
-                // 3. BANK DETAILS CARD
-                _buildFormCard(
-                  title: 'BANK DETAILS',
-                  icon: Icons.account_balance_outlined,
-                  children: [
-                    _buildInputField('BANK NAME', 'E.G. STATE BANK OF INDIA', Icons.account_balance, _bankNameCtrl),
-                    _buildInputField('ACCOUNT NUMBER', '00000000000', Icons.numbers, _accNumCtrl),
-                    _buildInputField('IFSC CODE', 'SBIN0000000', Icons.code, _ifscCtrl),
-                    _buildInputField('BRANCH NAME', 'E.G. CHENNAI MAIN', Icons.store_outlined, _branchCtrl),
-                  ],
-                ),
-                const SizedBox(height: 24),
-
-                // 4. UPLOAD DOCUMENTS CARD
-                _buildUploadCard(),
-                const SizedBox(height: 16),
-
-                // 5. SECURITY INFO BOX
-                Container(
-                  padding: const EdgeInsets.all(20),
-                  decoration: BoxDecoration(
-                    color: _navyBlue,
-                    borderRadius: BorderRadius.circular(16),
-                  ),
-                  child: Row(
-                    children: [
-                      Icon(Icons.shield_outlined, color: Colors.white.withOpacity(0.5), size: 24),
-                      const SizedBox(width: 16),
-                      const Expanded(
-                        child: Text(
-                          'YOUR DOCUMENTS ARE STORED SECURELY. VERIFICATION NORMALLY TAKES 24-48 HOURS.',
-                          style: TextStyle(color: Colors.white70, fontSize: 9, fontWeight: FontWeight.w900, fontStyle: FontStyle.italic, letterSpacing: 0.8, height: 1.5),
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-                const SizedBox(height: 32),
-
-                // 6. SUBMIT BUTTON
-                ElevatedButton.icon(
-                  onPressed: _handleSubmit,
-                  icon: const Icon(Icons.check_circle_outline, size: 20),
-                  label: const Text('SUBMIT KYC DOCUMENTS', style: TextStyle(fontWeight: FontWeight.w900, fontStyle: FontStyle.italic, fontSize: 14, letterSpacing: 1.0)),
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: AppColors.kSuccess, // Or _navyBlue
-                    foregroundColor: Colors.white,
-                    padding: const EdgeInsets.symmetric(vertical: 20),
-                    elevation: 0,
-                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-                  ),
-                ),
-                const SizedBox(height: 40),
-              ],
-            ),
+                        constraints: const BoxConstraints(maxWidth: 800), 
+            child: _loading
+                ? const Padding(
+                    padding: EdgeInsets.symmetric(vertical: 120),
+                    child: Center(child: AppLoader()),
+                  )
+                : _loadError != null
+                    ? _buildErrorState(_loadError!)
+                    : _buildForm(),
           ),
         ),
       ],
+    );
+  }
+
+  Widget _buildErrorState(String message) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 80),
+      child: Column(
+        children: [
+          Icon(Icons.error_outline, size: 40, color: _slateText),
+          const SizedBox(height: 12),
+          Text(
+            'COULD NOT LOAD KYC DETAILS',
+            style: TextStyle(color: _navyBlue, fontSize: 12, fontWeight: FontWeight.w900, fontStyle: FontStyle.italic, letterSpacing: 1.0),
+          ),
+          const SizedBox(height: 6),
+          Text(message, style: TextStyle(color: _slateText, fontSize: 11), textAlign: TextAlign.center),
+          const SizedBox(height: 16),
+          OutlinedButton(onPressed: _load, child: const Text('RETRY')),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildForm() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        // 1. HEADER
+        Row(
+          children: const [
+            Icon(Icons.star, color: AppColors.goldColor, size: 10),
+            SizedBox(width: 4),
+            Text('VERIFICATION', style: TextStyle(color: AppColors.goldColor, fontSize: 10, fontWeight: FontWeight.w900, fontStyle: FontStyle.italic, letterSpacing: 2.0)),
+          ],
+        ),
+        const SizedBox(height: 8),
+        Text('KYC VERIFICATION', style: TextStyle(color: _navyBlue, fontSize: 26, fontWeight: FontWeight.w900, fontStyle: FontStyle.italic, letterSpacing: -0.5)),
+        const SizedBox(height: 4),
+        Text('VERIFY YOUR IDENTITY TO UNLOCK WITHDRAWALS AND REWARDS', style: TextStyle(color: _slateText, fontSize: 9, fontWeight: FontWeight.w900, fontStyle: FontStyle.italic, letterSpacing: 1.0)),
+        const SizedBox(height: 16),
+
+        if (_details.isSubmitted) _buildStatusBanner(),
+        if (_details.isSubmitted) const SizedBox(height: 16),
+
+        // 2. PERSONAL DETAILS CARD
+        _buildFormCard(
+          title: 'PERSONAL DETAILS',
+          icon: Icons.person_outline,
+          children: [
+            _buildInputField('PHONE NUMBER', '+91 00000 00000', Icons.phone_outlined, _phoneCtrl),
+            _buildInputField('ADDRESS', 'Your full address', Icons.location_on_outlined, _addressCtrl),
+            _buildInputField('AADHAAR NUMBER', '0000 0000 0000', Icons.fingerprint, _aadhaarCtrl),
+            _buildInputField('PAN NUMBER', 'ABCDE1234F', Icons.badge_outlined, _panCtrl),
+          ],
+        ),
+        const SizedBox(height: 24),
+
+        // 3. BANK DETAILS CARD
+        _buildFormCard(
+          title: 'BANK DETAILS',
+          icon: Icons.account_balance_outlined,
+          children: [
+            _buildInputField('BANK NAME', 'E.G. STATE BANK OF INDIA', Icons.account_balance, _bankNameCtrl),
+            _buildInputField('ACCOUNT NUMBER', '00000000000', Icons.numbers, _accNumCtrl),
+            _buildInputField('IFSC CODE', 'SBIN0000000', Icons.code, _ifscCtrl),
+            _buildInputField('BRANCH NAME', 'E.G. CHENNAI MAIN', Icons.store_outlined, _branchCtrl),
+          ],
+        ),
+        const SizedBox(height: 24),
+
+        // 4. UPLOAD DOCUMENTS CARD
+        _buildUploadCard(),
+        const SizedBox(height: 16),
+
+        // 5. SECURITY INFO BOX
+        Container(
+          padding: const EdgeInsets.all(20),
+          decoration: BoxDecoration(
+            color: _navyBlue,
+            borderRadius: BorderRadius.circular(16),
+          ),
+          child: Row(
+            children: [
+              Icon(Icons.shield_outlined, color: Colors.white.withOpacity(0.5), size: 24),
+              const SizedBox(width: 16),
+              const Expanded(
+                child: Text(
+                  'YOUR DOCUMENTS ARE STORED SECURELY. VERIFICATION NORMALLY TAKES 24-48 HOURS.',
+                  style: TextStyle(color: Colors.white70, fontSize: 9, fontWeight: FontWeight.w900, fontStyle: FontStyle.italic, letterSpacing: 0.8, height: 1.5),
+                ),
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(height: 32),
+
+        // 6. SUBMIT BUTTON
+        ElevatedButton.icon(
+          onPressed: _submitting ? null : _handleSubmit,
+          icon: _submitting
+              ? const SizedBox(
+                  width: 18,
+                  height: 18,
+                  child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
+                )
+              : const Icon(Icons.check_circle_outline, size: 20),
+          label: Text(
+            _submitting ? 'SUBMITTING...' : 'SUBMIT KYC DOCUMENTS',
+            style: const TextStyle(fontWeight: FontWeight.w900, fontStyle: FontStyle.italic, fontSize: 14, letterSpacing: 1.0),
+          ),
+          style: ElevatedButton.styleFrom(
+            backgroundColor: AppColors.kSuccess,
+            foregroundColor: Colors.white,
+            padding: const EdgeInsets.symmetric(vertical: 20),
+            elevation: 0,
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+          ),
+        ),
+        const SizedBox(height: 40),
+      ],
+    );
+  }
+
+  // ==========================================================================
+  // STATUS BANNER
+  // ==========================================================================
+  Widget _buildStatusBanner() {
+    late final Color bg;
+    late final Color fg;
+    late final IconData icon;
+    late final String label;
+    late final String message;
+
+    if (_details.isApproved) {
+      bg = const Color(0xFFECFDF5);
+      fg = AppColors.kSuccess;
+      icon = Icons.verified_outlined;
+      label = 'VERIFIED';
+      message = 'Your KYC has been approved.';
+    } else if (_details.isRejected) {
+      bg = const Color(0xFFFEF2F2);
+      fg = const Color(0xFFDC2626);
+      icon = Icons.error_outline;
+      label = 'REJECTED';
+      message = 'Your last submission was rejected. Please review and resubmit.';
+    } else {
+      bg = AppColors.goldBadgeBg;
+      fg = AppColors.goldColor;
+      icon = Icons.hourglass_top_outlined;
+      label = 'PENDING REVIEW';
+      message = 'Your KYC is under verification. You can still update details below.';
+    }
+
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(color: bg, borderRadius: BorderRadius.circular(16)),
+      child: Row(
+        children: [
+          Icon(icon, color: fg, size: 20),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(label, style: TextStyle(color: fg, fontSize: 11, fontWeight: FontWeight.w900, fontStyle: FontStyle.italic, letterSpacing: 1.0)),
+                const SizedBox(height: 2),
+                Text(message, style: TextStyle(color: fg.withOpacity(0.85), fontSize: 10, fontWeight: FontWeight.w700)),
+              ],
+            ),
+          ),
+        ],
+      ),
     );
   }
 
@@ -249,6 +422,8 @@ class _AuditorKycScreenState extends State<AuditorKycScreen> {
   }
 
   Widget _buildUploadCard() {
+    final hasExistingDoc = _uploadedDocument == null && _details.hasDocument;
+
     return Container(
       padding: const EdgeInsets.all(32),
       decoration: BoxDecoration(
@@ -277,20 +452,21 @@ class _AuditorKycScreenState extends State<AuditorKycScreen> {
               Container(
                 padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
                 decoration: BoxDecoration(color: AppColors.goldBadgeBg, borderRadius: BorderRadius.circular(12)),
-                child: const Text('REQUIRED', style: TextStyle(color: AppColors.goldColor, fontSize: 8, fontWeight: FontWeight.w900, fontStyle: FontStyle.italic, letterSpacing: 1.0)),
+                child: Text(
+                  hasExistingDoc ? 'ON FILE' : 'REQUIRED',
+                  style: const TextStyle(color: AppColors.goldColor, fontSize: 8, fontWeight: FontWeight.w900, fontStyle: FontStyle.italic, letterSpacing: 1.0),
+                ),
               )
             ],
           ),
           const SizedBox(height: 32),
-          
-          // Checklist
+
           _buildChecklistItem('01', 'AADHAAR CARD', 'FRONT & BACK SIDE'),
           _buildChecklistItem('02', 'PAN CARD', 'FULL CLEAR PHOTO'),
           _buildChecklistItem('03', 'BANK PROOF', 'PASSBOOK / CHEQUE'),
-          
+
           const SizedBox(height: 32),
 
-          // Upload Box Area
           InkWell(
             onTap: _handleUpload,
             borderRadius: BorderRadius.circular(24),
@@ -300,7 +476,7 @@ class _AuditorKycScreenState extends State<AuditorKycScreen> {
               decoration: BoxDecoration(
                 color: _lightBg,
                 borderRadius: BorderRadius.circular(24),
-                border: Border.all(color: _lightBorder, width: 2), // Mimicking the dashed box with a faint solid border
+                border: Border.all(color: _lightBorder, width: 2),
               ),
               child: Column(
                 children: [
@@ -308,21 +484,29 @@ class _AuditorKycScreenState extends State<AuditorKycScreen> {
                     padding: const EdgeInsets.all(16),
                     decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(16), border: Border.all(color: _lightBorder)),
                     child: Icon(
-                      _uploadedDocument != null ? Icons.check_circle : Icons.upload_file, 
-                      color: _uploadedDocument != null ? AppColors.kSuccess : const Color(0xFFCBD5E1), 
-                      size: 28
+                      (_uploadedDocument != null || hasExistingDoc) ? Icons.check_circle : Icons.upload_file,
+                      color: (_uploadedDocument != null || hasExistingDoc) ? AppColors.kSuccess : const Color(0xFFCBD5E1),
+                      size: 28,
                     ),
                   ),
                   const SizedBox(height: 16),
                   Text(
-                    _uploadedDocument != null ? 'DOCUMENT SELECTED' : 'CLICK TO UPLOAD', 
-                    style: TextStyle(color: _navyBlue, fontSize: 14, fontWeight: FontWeight.w900, fontStyle: FontStyle.italic, letterSpacing: 1.0)
+                    _uploadedDocument != null
+                        ? 'DOCUMENT SELECTED'
+                        : hasExistingDoc
+                            ? 'DOCUMENT ON FILE'
+                            : 'CLICK TO UPLOAD',
+                    style: TextStyle(color: _navyBlue, fontSize: 14, fontWeight: FontWeight.w900, fontStyle: FontStyle.italic, letterSpacing: 1.0),
                   ),
                   const SizedBox(height: 8),
                   Text(
-                    _uploadedDocument != null ? _uploadedDocument!.name : 'PDF / IMAGES CONTAINING ALL DOCS (MAX: 5MB)', 
+                    _uploadedDocument != null
+                        ? _uploadedDocument!.name
+                        : hasExistingDoc
+                            ? 'TAP TO REPLACE THE UPLOADED DOCUMENT'
+                            : 'PDF / IMAGES CONTAINING ALL DOCS (MAX: 5MB)',
                     textAlign: TextAlign.center,
-                    style: TextStyle(color: _slateText, fontSize: 9, fontWeight: FontWeight.w900, fontStyle: FontStyle.italic, letterSpacing: 1.0)
+                    style: TextStyle(color: _slateText, fontSize: 9, fontWeight: FontWeight.w900, fontStyle: FontStyle.italic, letterSpacing: 1.0),
                   ),
                 ],
               ),

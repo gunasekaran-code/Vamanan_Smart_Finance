@@ -1,37 +1,55 @@
 import 'package:flutter/material.dart';
 import 'package:frontend/core/theme/app_theme.dart';
+import '../../models/cashback_monitoring_model.dart';
+import '../../services/cashback_monitoring_service.dart';
+import 'package:frontend/shared/widgets/app_loader.dart';
 
-class CashbackMonitoringScreen extends StatelessWidget {
+class CashbackMonitoringScreen extends StatefulWidget {
   const CashbackMonitoringScreen({super.key});
 
-  // Mock data matching the provided image
-  final List<Map<String, String>> _recipients = const [
-    {
-      'initial': 'N',
-      'name': 'NANDHA KUMAR.M',
-      'amount': '₹73,398.6',
-    },
-    {
-      'initial': 'A',
-      'name': 'ARUN.K',
-      'amount': '₹73,398.6',
-    },
-    {
-      'initial': 'K',
-      'name': 'KANAGARAJ K',
-      'amount': '₹58,718.88',
-    },
-    {
-      'initial': 'A',
-      'name': 'AKILA.M',
-      'amount': '₹27,961.92',
-    },
-    {
-      'initial': 'T',
-      'name': 'TIRUPARANKUNDRAM MURUGAN',
-      'amount': '₹23,394',
-    },
-  ];
+  @override
+  State<CashbackMonitoringScreen> createState() =>
+      _CashbackMonitoringScreenState();
+}
+
+class _CashbackMonitoringScreenState extends State<CashbackMonitoringScreen> {
+  final CashbackMonitoringService _service = CashbackMonitoringService();
+  CashbackMonitoringResult? _result;
+  bool _loading = true;
+  String? _error;
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  @override
+  void dispose() {
+    _service.dispose();
+    super.dispose();
+  }
+
+  Future<void> _load() async {
+    setState(() {
+      _loading = true;
+      _error = null;
+    });
+    try {
+      final result = await _service.fetchMonitoringData();
+      if (!mounted) return;
+      setState(() {
+        _result = result;
+        _loading = false;
+      });
+    } catch (error) {
+      if (!mounted) return;
+      setState(() {
+        _error = error.toString();
+        _loading = false;
+      });
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -46,11 +64,23 @@ class CashbackMonitoringScreen extends StatelessWidget {
                 delegate: SliverChildListDelegate([
                   _buildHeader(),
                   const SizedBox(height: 32),
-                  _buildTotalPayoutCard(),
+                  if (_loading)
+                    const Padding(
+                      padding: EdgeInsets.symmetric(vertical: 48),
+                      child: Center(child: AppLoader()),
+                    )
+                  else if (_error != null)
+                    _buildErrorState()
+                  else ...[
+                    _buildTotalPayoutCard(),
                   const SizedBox(height: 20),
                   _buildActiveRecipientsCard(),
                   const SizedBox(height: 32),
-                  ..._recipients.map((data) => _buildRecipientCard(data)),
+                  if (_result!.entries.isEmpty)
+                    _buildEmptyState()
+                  else
+                    ..._result!.entries.map(_buildRecipientCard),
+                  ],
                   const SizedBox(height: 40), // Bottom scroll padding
                 ]),
               ),
@@ -86,6 +116,11 @@ class CashbackMonitoringScreen extends StatelessWidget {
               letterSpacing: -0.5,
             ),
           ),
+        ),
+        IconButton(
+          onPressed: _loading ? null : _load,
+          tooltip: 'Refresh cashback data',
+          icon: const Icon(Icons.refresh_rounded, color: AppColors.kPrimary),
         ),
       ],
     );
@@ -137,7 +172,7 @@ class CashbackMonitoringScreen extends StatelessWidget {
                 ),
                 const SizedBox(height: 4),
                 Text(
-                  '₹0',
+                  _formatAmount(_result?.totalAmount ?? 0),
                   style: const TextStyle(
                     color: AppColors.goldColor,
                     fontSize: 28,
@@ -199,7 +234,7 @@ class CashbackMonitoringScreen extends StatelessWidget {
                 ),
                 const SizedBox(height: 4),
                 Text(
-                  '100 Accounts',
+                  '${_result?.count ?? 0} Accounts',
                   style: const TextStyle(
                     color: AppColors.kPrimary,
                     fontSize: 26,
@@ -215,7 +250,7 @@ class CashbackMonitoringScreen extends StatelessWidget {
     );
   }
 
-  Widget _buildRecipientCard(Map<String, String> data) {
+  Widget _buildRecipientCard(CashbackMonitoringEntry data) {
     return Container(
       margin: const EdgeInsets.only(bottom: 16),
       padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 20),
@@ -244,7 +279,7 @@ class CashbackMonitoringScreen extends StatelessWidget {
             ),
             child: Center(
               child: Text(
-                data['initial']!,
+                data.initial,
                 style: const TextStyle(
                   color: AppColors.goldColor,
                   fontWeight: FontWeight.w900,
@@ -262,7 +297,7 @@ class CashbackMonitoringScreen extends StatelessWidget {
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
                 Text(
-                  data['name']!,
+                  data.name,
                   style: const TextStyle(
                     color: AppColors.kPrimary,
                     fontWeight: FontWeight.w900,
@@ -273,9 +308,9 @@ class CashbackMonitoringScreen extends StatelessWidget {
                   overflow: TextOverflow.ellipsis,
                 ),
                 const SizedBox(height: 4),
-                const Text(
-                  'STANDARD WALLET',
-                  style: TextStyle(
+                Text(
+                  data.walletType ?? 'STANDARD WALLET',
+                  style: const TextStyle(
                     color: AppColors.kTextMuted,
                     fontSize: 10,
                     fontWeight: FontWeight.w600,
@@ -291,7 +326,7 @@ class CashbackMonitoringScreen extends StatelessWidget {
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
               Text(
-                data['amount']!,
+                _formatAmount(data.amount),
                 style: const TextStyle(
                   color: AppColors.kPrimary,
                   fontSize: 17,
@@ -317,4 +352,39 @@ class CashbackMonitoringScreen extends StatelessWidget {
       ),
     );
   }
+
+  Widget _buildErrorState() {
+    return Column(
+      children: [
+        const Icon(Icons.cloud_off_rounded, color: AppColors.kDanger, size: 42),
+        const SizedBox(height: 12),
+        Text(
+          _error!,
+          textAlign: TextAlign.center,
+          style: const TextStyle(color: AppColors.kTextMuted),
+        ),
+        const SizedBox(height: 16),
+        OutlinedButton.icon(
+          onPressed: _load,
+          icon: const Icon(Icons.refresh_rounded),
+          label: const Text('TRY AGAIN'),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildEmptyState() {
+    return const Padding(
+      padding: EdgeInsets.symmetric(vertical: 40),
+      child: Center(
+        child: Text(
+          'No cashback records found.',
+          style: TextStyle(color: AppColors.kTextMuted),
+        ),
+      ),
+    );
+  }
+
+  String _formatAmount(double amount) =>
+      '₹${amount.toStringAsFixed(2).replaceFirst(RegExp(r'\.00$'), '')}';
 }

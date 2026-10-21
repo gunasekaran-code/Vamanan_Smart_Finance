@@ -1,9 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:frontend/core/theme/app_theme.dart';
-import 'purchase_verification_page.dart'; // Ensure this imports your PurchaseItem model
+import '../../models/advocate_purchase_model.dart';
 
 class PurchaseVerificationDetailsPage extends StatelessWidget {
-  final PurchaseItem item;
+  final PurchaseModel item;
 
   const PurchaseVerificationDetailsPage({super.key, required this.item});
 
@@ -20,23 +20,28 @@ class PurchaseVerificationDetailsPage extends StatelessWidget {
             Container(
               padding: const EdgeInsets.all(8),
               decoration: BoxDecoration(
-                color: const Color(0xFF1E293B), // Dark Navy
-                borderRadius: BorderRadius.circular(8)
-              ),
-              child: const Icon(Icons.receipt_long, color: Colors.white, size: 18),
+                  color: const Color(0xFF1E293B), // Dark Navy
+                  borderRadius: BorderRadius.circular(8)),
+              child:
+                  const Icon(Icons.receipt_long, color: Colors.white, size: 18),
             ),
             const SizedBox(width: 12),
             Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                const Text(
-                  'PURCHASE VERIFICATION DETAILS', 
-                  style: TextStyle(fontSize: 10, fontWeight: FontWeight.w900, fontStyle: FontStyle.italic, color: Color(0xFF94A3B8), letterSpacing: 1.0)
-                ),
-                Text(
-                  'RECEIPT ${item.id}', 
-                  style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w900, fontStyle: FontStyle.italic, color: Color(0xFF1E293B))
-                ),
+                const Text('PURCHASE VERIFICATION DETAILS',
+                    style: TextStyle(
+                        fontSize: 10,
+                        fontWeight: FontWeight.w900,
+                        fontStyle: FontStyle.italic,
+                        color: Color(0xFF94A3B8),
+                        letterSpacing: 1.0)),
+                Text('RECEIPT ${item.id}',
+                    style: const TextStyle(
+                        fontSize: 14,
+                        fontWeight: FontWeight.w900,
+                        fontStyle: FontStyle.italic,
+                        color: Color(0xFF1E293B))),
               ],
             ),
           ],
@@ -62,7 +67,7 @@ class PurchaseVerificationDetailsPage extends StatelessWidget {
                 isMobile
                     ? Column(
                         children: [
-                          _buildLeftColumn(),
+                          _buildLeftColumn(context),
                           const SizedBox(height: 24),
                           _buildRightColumn(),
                         ],
@@ -70,19 +75,20 @@ class PurchaseVerificationDetailsPage extends StatelessWidget {
                     : Row(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          Expanded(flex: 1, child: _buildLeftColumn()),
+                          Expanded(flex: 1, child: _buildLeftColumn(context)),
                           const SizedBox(width: 24),
                           Expanded(flex: 1, child: _buildRightColumn()),
                         ],
                       ),
                 const SizedBox(height: 32),
-                
+
                 // Bottom Status Bar
                 Container(
                   width: double.infinity,
                   padding: const EdgeInsets.symmetric(vertical: 16),
                   decoration: BoxDecoration(
-                    color: const Color(0xFFFFFBEB), // Very light gold background
+                    color:
+                        const Color(0xFFFFFBEB), // Very light gold background
                     border: Border.all(color: AppColors.goldBorder),
                     borderRadius: BorderRadius.circular(12),
                   ),
@@ -90,14 +96,23 @@ class PurchaseVerificationDetailsPage extends StatelessWidget {
                     mainAxisAlignment: MainAxisAlignment.center,
                     children: [
                       Icon(
-                        item.status == 'ACTIVE' ? Icons.check_circle_outline : Icons.pending_actions,
+                        item.status == 'ACTIVE'
+                            ? Icons.check_circle_outline
+                            : Icons.pending_actions,
                         color: AppColors.goldColor,
                         size: 20,
                       ),
                       const SizedBox(width: 8),
                       Text(
-                        item.status == 'ACTIVE' ? 'PURCHASE RECORD APPROVED & ACTIVE' : 'PURCHASE PENDING VERIFICATION',
-                        style: const TextStyle(color: AppColors.goldColor, fontWeight: FontWeight.w900, fontStyle: FontStyle.italic, fontSize: 12, letterSpacing: 0.5),
+                        item.status == 'ACTIVE'
+                            ? 'PURCHASE RECORD APPROVED & ACTIVE'
+                            : 'PURCHASE PENDING VERIFICATION',
+                        style: const TextStyle(
+                            color: AppColors.goldColor,
+                            fontWeight: FontWeight.w900,
+                            fontStyle: FontStyle.italic,
+                            fontSize: 12,
+                            letterSpacing: 0.5),
                       ),
                     ],
                   ),
@@ -111,7 +126,7 @@ class PurchaseVerificationDetailsPage extends StatelessWidget {
   }
 
   // --- LEFT COLUMN (Customer, Bank, Receipt) ---
-  Widget _buildLeftColumn() {
+  Widget _buildLeftColumn(BuildContext context) {
     return Column(
       children: [
         // Card 1: Customer Details
@@ -121,24 +136,33 @@ class PurchaseVerificationDetailsPage extends StatelessWidget {
             Row(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Expanded(child: _DataField(label: 'FULL NAME', value: item.customerName)),
+                Expanded(
+                    child: _DataField(
+                        label: 'FULL NAME', value: item.customerName)),
                 const SizedBox(width: 16),
-                Expanded(child: _DataField(label: 'EMAIL ADDRESS', value: item.customerEmail)),
+                Expanded(
+                    child: _DataField(
+                        label: 'EMAIL ADDRESS', value: item.customerEmail)),
               ],
             ),
             const SizedBox(height: 24),
             Row(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Expanded(child: _DataField(label: 'PHONE NUMBER', value: item.phone)),
+                Expanded(
+                    child:
+                        _DataField(label: 'PHONE NUMBER', value: item.phone)),
                 const SizedBox(width: 16),
-                Expanded(child: _DataField(label: 'KYC VERIFICATION DETAILS', value: 'AADHAR: ${item.aadhar}\nPAN: ${item.pan}')),
+                Expanded(
+                    child: _DataField(
+                        label: 'KYC VERIFICATION DETAILS',
+                        value: 'AADHAR: ${item.aadhar}\nPAN: ${item.pan}')),
               ],
             ),
           ],
         ),
         const SizedBox(height: 24),
-        
+
         // Card 2: Settlement Bank Details
         _DetailCard(
           title: 'SETTLEMENT BANK DETAILS',
@@ -153,7 +177,8 @@ class PurchaseVerificationDetailsPage extends StatelessWidget {
             const SizedBox(height: 24),
             Row(
               children: [
-                Expanded(child: _DataField(label: 'ACCOUNT NUMBER', value: 'N/A')),
+                Expanded(
+                    child: _DataField(label: 'ACCOUNT NUMBER', value: 'N/A')),
                 const SizedBox(width: 16),
                 Expanded(child: _DataField(label: 'IFSC CODE', value: 'N/A')),
               ],
@@ -166,37 +191,83 @@ class PurchaseVerificationDetailsPage extends StatelessWidget {
         _DetailCard(
           title: 'UPLOADED PAYMENT RECEIPT',
           children: [
-            Container(
-              height: 220,
-              width: double.infinity,
-              decoration: BoxDecoration(
-                color: Colors.grey.shade200,
-                borderRadius: BorderRadius.circular(12),
-                // Using a placeholder; in production use Image.network
-                image: const DecorationImage(
-                  image: NetworkImage('https://via.placeholder.com/600x400?text=Payment+Receipt'),
-                  fit: BoxFit.cover,
+            GestureDetector(
+              onTap: item.receiptImageUrl == null
+                  ? null
+                  : () => _openFullReceipt(context, item.receiptImageUrl!),
+              child: Container(
+                height: 220,
+                width: double.infinity,
+                clipBehavior: Clip.antiAlias,
+                decoration: BoxDecoration(
+                  color: Colors.grey.shade200,
+                  borderRadius: BorderRadius.circular(12),
                 ),
+                child:
+                    _ReceiptImage(url: item.receiptImageUrl, fit: BoxFit.cover),
               ),
             ),
             const SizedBox(height: 16),
             SizedBox(
               width: double.infinity,
               child: ElevatedButton.icon(
-                onPressed: () {}, // Add logic to view full screen image
+                onPressed: item.receiptImageUrl == null
+                    ? null
+                    : () => _openFullReceipt(context, item.receiptImageUrl!),
                 icon: const Icon(Icons.open_in_new, size: 16),
-                label: const Text('VIEW FULL RECEIPT IMAGE', style: TextStyle(fontWeight: FontWeight.w900, fontStyle: FontStyle.italic, fontSize: 12)),
+                label: const Text('VIEW FULL RECEIPT IMAGE',
+                    style: TextStyle(
+                        fontWeight: FontWeight.w900,
+                        fontStyle: FontStyle.italic,
+                        fontSize: 12)),
                 style: ElevatedButton.styleFrom(
                   backgroundColor: const Color(0xFF1E293B), // Dark Navy
                   foregroundColor: Colors.white,
                   padding: const EdgeInsets.symmetric(vertical: 16),
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                  shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(8)),
                 ),
               ),
             )
           ],
         ),
       ],
+    );
+  }
+
+  /// Full-screen, zoomable view of the receipt.
+  void _openFullReceipt(BuildContext context, String url) {
+    showDialog<void>(
+      context: context,
+      barrierColor: Colors.black87,
+      builder: (ctx) => Dialog.fullscreen(
+        backgroundColor: Colors.black,
+        child: Stack(
+          children: [
+            Positioned.fill(
+              child: InteractiveViewer(
+                minScale: 0.5,
+                maxScale: 5,
+                child: Center(
+                    child: _ReceiptImage(
+                        url: url, fit: BoxFit.contain, dark: true)),
+              ),
+            ),
+            Positioned(
+              top: 16,
+              right: 16,
+              child: SafeArea(
+                child: IconButton(
+                  onPressed: () => Navigator.pop(ctx),
+                  style: IconButton.styleFrom(backgroundColor: Colors.white24),
+                  icon: const Icon(Icons.close, color: Colors.white),
+                  tooltip: 'Close',
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
     );
   }
 
@@ -208,42 +279,81 @@ class PurchaseVerificationDetailsPage extends StatelessWidget {
       children: [
         Row(
           children: [
-            Expanded(child: _DataField(label: 'PRODUCT NAME', value: item.productTitle, isBoxed: true)),
+            Expanded(
+                child: _DataField(
+                    label: 'PRODUCT NAME',
+                    value: item.productTitle,
+                    isBoxed: true)),
             const SizedBox(width: 16),
-            Expanded(child: _DataField(label: 'ASSET TYPE / CATEGORY', value: item.category, isBoxed: true)),
+            Expanded(
+                child: _DataField(
+                    label: 'ASSET TYPE / CATEGORY',
+                    value: item.category,
+                    isBoxed: true)),
           ],
         ),
         const SizedBox(height: 16),
         Row(
           children: [
-            Expanded(child: _DataField(label: 'WEIGHT (GRAMS)', value: item.weight, isBoxed: true)),
+            Expanded(
+                child: _DataField(
+                    label: 'WEIGHT (GRAMS)',
+                    value: item.weight,
+                    isBoxed: true)),
             const SizedBox(width: 16),
-            Expanded(child: _DataField(label: 'PAYMENT METHOD', value: item.paymentMethod, isBoxed: true)),
+            Expanded(
+                child: _DataField(
+                    label: 'PAYMENT METHOD',
+                    value: item.paymentMethod,
+                    isBoxed: true)),
           ],
         ),
         const SizedBox(height: 16),
-        _DataField(label: 'TRANSACTION ID (TID)', value: item.paymentTid, isBoxed: true),
+        _DataField(
+            label: 'TRANSACTION ID (TID)',
+            value: item.paymentTid,
+            isBoxed: true),
         const SizedBox(height: 32),
-        
         const Divider(color: Color(0xFFF1F5F9), thickness: 1.5),
         const SizedBox(height: 24),
-        
-        const Text('PAYMENT DETAILS', style: TextStyle(fontSize: 10, fontWeight: FontWeight.w900, fontStyle: FontStyle.italic, color: Color(0xFF94A3B8), letterSpacing: 1.0)),
+        const Text('PAYMENT DETAILS',
+            style: TextStyle(
+                fontSize: 10,
+                fontWeight: FontWeight.w900,
+                fontStyle: FontStyle.italic,
+                color: Color(0xFF94A3B8),
+                letterSpacing: 1.0)),
         const SizedBox(height: 16),
-        
         Row(
           children: [
-            Expanded(child: _DataField(label: 'PRODUCT SUBTOTAL (EX-GST)', value: '₹${item.exGst.toStringAsFixed(2)}', isBoxed: true)),
+            Expanded(
+                child: _DataField(
+                    label: 'PRODUCT SUBTOTAL (EX-GST)',
+                    value: '₹${item.exGst.toStringAsFixed(2)}',
+                    isBoxed: true)),
             const SizedBox(width: 16),
-            Expanded(child: _DataField(label: 'GST AMOUNT', value: '₹${item.gst.toStringAsFixed(2)}', isBoxed: true)),
+            Expanded(
+                child: _DataField(
+                    label: 'GST AMOUNT',
+                    value: '₹${item.gst.toStringAsFixed(2)}',
+                    isBoxed: true)),
           ],
         ),
         const SizedBox(height: 16),
         Row(
           children: [
-            Expanded(child: _DataField(label: 'TOTAL PAID (INCLUSIVE OF GST)', value: '₹${item.totalPrice.toStringAsFixed(2)}', isBoxed: true, highlight: true)),
+            Expanded(
+                child: _DataField(
+                    label: 'TOTAL PAID (INCLUSIVE OF GST)',
+                    value: '₹${item.totalPrice.toStringAsFixed(2)}',
+                    isBoxed: true,
+                    highlight: true)),
             const SizedBox(width: 16),
-            Expanded(child: _DataField(label: 'CASHBACK ELIGIBLE (EX-GST)', value: '₹${item.exGst.toStringAsFixed(2)}', isBoxed: true)),
+            Expanded(
+                child: _DataField(
+                    label: 'CASHBACK ELIGIBLE (EX-GST)',
+                    value: '₹${item.exGst.toStringAsFixed(2)}',
+                    isBoxed: true)),
           ],
         ),
       ],
@@ -254,6 +364,76 @@ class PurchaseVerificationDetailsPage extends StatelessWidget {
 // ============================================================================
 // HELPER WIDGETS FOR DETAILS PAGE
 // ============================================================================
+
+/// Loads the uploaded receipt from the backend, with loading, missing and
+/// failed states.
+class _ReceiptImage extends StatelessWidget {
+  final String? url;
+  final BoxFit fit;
+  final bool dark;
+
+  const _ReceiptImage(
+      {required this.url, required this.fit, this.dark = false});
+
+  @override
+  Widget build(BuildContext context) {
+    if (url == null) {
+      return _placeholder(
+          Icons.image_not_supported_outlined, 'NO RECEIPT UPLOADED');
+    }
+
+    return Image.network(
+      url!,
+      fit: fit,
+      width: double.infinity,
+      height: double.infinity,
+      // Render via an <img> element on web so receipts served without CORS
+      // headers still display (same approach as the other image screens).
+      webHtmlElementStrategy: WebHtmlElementStrategy.prefer,
+      loadingBuilder: (context, child, progress) => progress == null
+          ? child
+          : Center(
+              child: CircularProgressIndicator(
+                strokeWidth: 2,
+                color: dark ? Colors.white : AppColors.kPrimary,
+                value: progress.expectedTotalBytes == null
+                    ? null
+                    : progress.cumulativeBytesLoaded /
+                        progress.expectedTotalBytes!,
+              ),
+            ),
+      errorBuilder: (context, _, __) => _placeholder(
+          Icons.broken_image_outlined, 'RECEIPT COULD NOT BE LOADED'),
+    );
+  }
+
+  Widget _placeholder(IconData icon, String label) {
+    final color = dark ? Colors.white54 : const Color(0xFF94A3B8);
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(icon, size: 40, color: color),
+            const SizedBox(height: 10),
+            Text(
+              label,
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                color: color,
+                fontSize: 11,
+                fontWeight: FontWeight.w900,
+                fontStyle: FontStyle.italic,
+                letterSpacing: 1.0,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
 
 class _DetailCard extends StatelessWidget {
   final String title;
@@ -283,7 +463,12 @@ class _DetailCard extends StatelessWidget {
               ],
               Text(
                 title,
-                style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w900, fontStyle: FontStyle.italic, color: Color(0xFF94A3B8), letterSpacing: 1.0),
+                style: const TextStyle(
+                    fontSize: 11,
+                    fontWeight: FontWeight.w900,
+                    fontStyle: FontStyle.italic,
+                    color: Color(0xFF94A3B8),
+                    letterSpacing: 1.0),
               ),
             ],
           ),
@@ -303,7 +488,11 @@ class _DataField extends StatelessWidget {
   final bool isBoxed;
   final bool highlight;
 
-  const _DataField({required this.label, required this.value, this.isBoxed = false, this.highlight = false});
+  const _DataField(
+      {required this.label,
+      required this.value,
+      this.isBoxed = false,
+      this.highlight = false});
 
   @override
   Widget build(BuildContext context) {
@@ -322,9 +511,12 @@ class _DataField extends StatelessWidget {
         width: double.infinity,
         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
         decoration: BoxDecoration(
-          color: highlight ? AppColors.goldBg : const Color(0xFFF8FAFC), // F8FAFC is a very light blue/grey
+          color: highlight
+              ? AppColors.goldBg
+              : const Color(0xFFF8FAFC), // F8FAFC is a very light blue/grey
           borderRadius: BorderRadius.circular(8),
-          border: Border.all(color: highlight ? AppColors.goldBorder : Colors.transparent),
+          border: Border.all(
+              color: highlight ? AppColors.goldBorder : Colors.transparent),
         ),
         child: textWidget,
       );
@@ -333,10 +525,13 @@ class _DataField extends StatelessWidget {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text(
-          label, 
-          style: const TextStyle(fontSize: 9, fontWeight: FontWeight.w900, fontStyle: FontStyle.italic, color: Color(0xFF94A3B8), letterSpacing: 0.5)
-        ),
+        Text(label,
+            style: const TextStyle(
+                fontSize: 9,
+                fontWeight: FontWeight.w900,
+                fontStyle: FontStyle.italic,
+                color: Color(0xFF94A3B8),
+                letterSpacing: 0.5)),
         const SizedBox(height: 6),
         textWidget,
       ],

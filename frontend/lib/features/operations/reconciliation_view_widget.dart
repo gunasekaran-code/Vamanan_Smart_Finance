@@ -1,27 +1,11 @@
 import 'package:flutter/material.dart';
 import 'package:frontend/core/theme/app_theme.dart';
+import 'package:frontend/models/tally_integration_model.dart';
+import 'package:frontend/services/tally_integration_service.dart';
+import 'tally_state_views.dart';
 
-// --- Mock Data Model ---
-class ReconciliationData {
-  final String ledger;
-  final String sourceRecords;
-  final String sourceAmount;
-  final String posted;
-  final String synced;
-  final String unposted;
-  final String status;
-
-  ReconciliationData({
-    required this.ledger,
-    required this.sourceRecords,
-    required this.sourceAmount,
-    required this.posted,
-    required this.synced,
-    required this.unposted,
-    required this.status,
-  });
-}
-
+/// `?resource=reconciliation` — source records against posted vouchers, one
+/// row per ledger, so unposted gaps are visible before a sync.
 class ReconciliationViewWidget extends StatefulWidget {
   const ReconciliationViewWidget({super.key});
 
@@ -30,15 +14,45 @@ class ReconciliationViewWidget extends StatefulWidget {
 }
 
 class _ReconciliationViewWidgetState extends State<ReconciliationViewWidget> {
-  final List<ReconciliationData> _tableData = [
-    ReconciliationData(ledger: 'Sales', sourceRecords: '43', sourceAmount: '₹1,95,36,477.75', posted: '0', synced: '0', unposted: '43', status: 'PENDING'),
-    ReconciliationData(ledger: 'Cashback', sourceRecords: '10', sourceAmount: '₹3,09,911.16', posted: '0', synced: '0', unposted: '10', status: 'PENDING'),
-    ReconciliationData(ledger: 'Referral', sourceRecords: '7', sourceAmount: '₹55,503.42', posted: '0', synced: '0', unposted: '7', status: 'PENDING'),
-    ReconciliationData(ledger: 'Withdrawal', sourceRecords: '0', sourceAmount: '₹0.00', posted: '0', synced: '0', unposted: '0', status: 'RECONCILED'),
-  ];
+  final TallyIntegrationService _service = TallyIntegrationService();
+
+  List<TallyReconciliationRow> _rows = const [];
+  bool _isLoading = true;
+  String? _error;
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  Future<void> _load() async {
+    setState(() {
+      _isLoading = true;
+      _error = null;
+    });
+    try {
+      final rows = await _service.fetchReconciliation();
+      if (!mounted) return;
+      setState(() => _rows = rows);
+    } on TallyIntegrationException catch (e) {
+      if (mounted) setState(() => _error = e.message);
+    } catch (e) {
+      if (mounted) setState(() => _error = 'Something went wrong: $e');
+    } finally {
+      if (mounted) setState(() => _isLoading = false);
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
+    if (_isLoading && _rows.isEmpty) {
+      return const TallyLoadingCard(label: 'RECONCILING LEDGERS');
+    }
+    if (_error != null && _rows.isEmpty) {
+      return TallyErrorCard(message: _error!, onRetry: _load);
+    }
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
@@ -64,21 +78,28 @@ class _ReconciliationViewWidgetState extends State<ReconciliationViewWidget> {
                           fontSize: 16,
                           fontWeight: FontWeight.w900,
                           fontStyle: FontStyle.italic,
-                          color: Color(0xFF1E3A8A), // Navy Blue
+                          color: kTallyNavy,
                           letterSpacing: 1.5,
                         ),
                       ),
                     ),
                     TextButton.icon(
-                      onPressed: () {},
-                      icon: const Icon(Icons.sync, size: 16, color: Color(0xFFD97706)),
+                      onPressed: _isLoading ? null : _load,
+                      icon: _isLoading
+                          ? const SizedBox(
+                              width: 16,
+                              height: 16,
+                              child: CircularProgressIndicator(
+                                  strokeWidth: 2, color: kTallyGold),
+                            )
+                          : const Icon(Icons.sync, size: 16, color: kTallyGold),
                       label: const Text(
                         'REFRESH',
                         style: TextStyle(
                           fontWeight: FontWeight.w900,
                           fontStyle: FontStyle.italic,
                           fontSize: 12,
-                          color: Color(0xFFD97706), // Gold/Amber
+                          color: kTallyGold,
                           letterSpacing: 1,
                         ),
                       ),
@@ -92,79 +113,110 @@ class _ReconciliationViewWidgetState extends State<ReconciliationViewWidget> {
               const Divider(height: 1, color: AppColors.kBorder),
 
               // --- 2. Scrollable Data Table ---
-              SingleChildScrollView(
-                scrollDirection: Axis.horizontal,
-                child: ConstrainedBox(
-                  constraints: BoxConstraints(
-                    minWidth: MediaQuery.of(context).size.width - 48, // Fills container width
-                  ),
-                  child: DataTable(
-                    columnSpacing: 40,
-                    headingRowHeight: 56,
-                    dataRowMinHeight: 72,
-                    dataRowMaxHeight: 72,
-                    headingRowColor: WidgetStateProperty.all(const Color(0xFFF8FAFC)),
-                    dividerThickness: 1,
-                    headingTextStyle: const TextStyle(
+              if (_rows.isEmpty)
+                const Padding(
+                  padding: EdgeInsets.symmetric(vertical: 60, horizontal: 24),
+                  child: Text(
+                    'NOTHING TO RECONCILE YET',
+                    textAlign: TextAlign.center,
+                    style: TextStyle(
+                      fontSize: 11,
                       fontWeight: FontWeight.w900,
                       fontStyle: FontStyle.italic,
-                      color: Color(0xFF94A3B8),
-                      fontSize: 9,
+                      color: kTallyMuted,
                       letterSpacing: 1.5,
                     ),
-                    columns: const [
-                      DataColumn(label: Text('LEDGER')),
-                      DataColumn(label: Text('SOURCE RECORDS'), numeric: true),
-                      DataColumn(label: Text('SOURCE AMOUNT'), numeric: true),
-                      DataColumn(label: Text('POSTED'), numeric: true),
-                      DataColumn(label: Text('SYNCED'), numeric: true),
-                      DataColumn(label: Text('UNPOSTED'), numeric: true),
-                      DataColumn(label: Text('STATUS')),
-                    ],
-                    rows: _tableData.map((row) {
-                      // Logic for unposted text color
-                      bool hasUnposted = int.tryParse(row.unposted) != null && int.parse(row.unposted) > 0;
-
-                      return DataRow(
-                        cells: [
-                          DataCell(Text(row.ledger, style: const TextStyle(fontWeight: FontWeight.w900, fontStyle: FontStyle.italic, color: Color(0xFF1E3A8A), fontSize: 13))),
-                          DataCell(Text(row.sourceRecords, style: const TextStyle(fontWeight: FontWeight.w900, fontStyle: FontStyle.italic, color: Color(0xFF1E3A8A), fontSize: 13))),
-                          DataCell(Text(row.sourceAmount, style: const TextStyle(fontWeight: FontWeight.w900, fontStyle: FontStyle.italic, color: Color(0xFF1E3A8A), fontSize: 13))),
-                          DataCell(Text(row.posted, style: const TextStyle(fontWeight: FontWeight.w900, fontStyle: FontStyle.italic, color: Color(0xFF1E3A8A), fontSize: 13))),
-                          DataCell(Text(row.synced, style: const TextStyle(fontWeight: FontWeight.w900, fontStyle: FontStyle.italic, color: Color(0xFF1E3A8A), fontSize: 13))),
-                          DataCell(Text(row.unposted, style: TextStyle(fontWeight: FontWeight.w900, fontStyle: FontStyle.italic, color: hasUnposted ? const Color(0xFFD97706) : const Color(0xFF1E3A8A), fontSize: 14))),
-                          DataCell(
-                            Container(
-                              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-                              decoration: BoxDecoration(
-                                color: const Color(0xFFFFFBEB), // Light amber tint
-                                borderRadius: BorderRadius.circular(8),
-                                border: Border.all(color: const Color(0xFFFDE68A)),
-                              ),
-                              child: Text(
-                                row.status,
-                                style: const TextStyle(
-                                  color: Color(0xFFD97706),
-                                  fontSize: 9,
-                                  fontWeight: FontWeight.w900,
-                                  fontStyle: FontStyle.italic,
-                                  letterSpacing: 0.5,
-                                ),
-                              ),
-                            ),
-                          ),
-                        ],
-                      );
-                    }).toList(),
+                  ),
+                )
+              else
+                SingleChildScrollView(
+                  scrollDirection: Axis.horizontal,
+                  child: ConstrainedBox(
+                    constraints: BoxConstraints(
+                      minWidth: MediaQuery.of(context).size.width - 48,
+                    ),
+                    child: DataTable(
+                      columnSpacing: 40,
+                      headingRowHeight: 56,
+                      dataRowMinHeight: 72,
+                      dataRowMaxHeight: 72,
+                      headingRowColor: WidgetStateProperty.all(kTallyTint),
+                      dividerThickness: 1,
+                      headingTextStyle: const TextStyle(
+                        fontWeight: FontWeight.w900,
+                        fontStyle: FontStyle.italic,
+                        color: kTallyMuted,
+                        fontSize: 9,
+                        letterSpacing: 1.5,
+                      ),
+                      columns: const [
+                        DataColumn(label: Text('LEDGER')),
+                        DataColumn(label: Text('SOURCE RECORDS'), numeric: true),
+                        DataColumn(label: Text('SOURCE AMOUNT'), numeric: true),
+                        DataColumn(label: Text('POSTED'), numeric: true),
+                        DataColumn(label: Text('SYNCED'), numeric: true),
+                        DataColumn(label: Text('UNPOSTED'), numeric: true),
+                        DataColumn(label: Text('STATUS')),
+                      ],
+                      rows: _rows.map(_buildRow).toList(),
+                    ),
                   ),
                 ),
-              ),
-              // Padding at the bottom for aesthetic spacing
               const SizedBox(height: 16),
             ],
           ),
         ),
       ],
+    );
+  }
+
+  DataRow _buildRow(TallyReconciliationRow row) {
+    const cellStyle = TextStyle(
+      fontWeight: FontWeight.w900,
+      fontStyle: FontStyle.italic,
+      color: kTallyNavy,
+      fontSize: 13,
+    );
+
+    return DataRow(
+      cells: [
+        DataCell(Text(row.ledgerDisplay, style: cellStyle)),
+        DataCell(Text('${row.sourceCount}', style: cellStyle)),
+        DataCell(Text(row.sourceAmountDisplay, style: cellStyle)),
+        DataCell(Text('${row.postedCount}', style: cellStyle)),
+        DataCell(Text('${row.syncedCount}', style: cellStyle)),
+        DataCell(Text(
+          '${row.unposted}',
+          // An outstanding gap is called out in gold; a settled one stays navy.
+          style: cellStyle.copyWith(
+            color: row.hasUnposted ? kTallyGold : kTallyNavy,
+            fontSize: 14,
+          ),
+        )),
+        DataCell(_buildStatusPill(row)),
+      ],
+    );
+  }
+
+  Widget _buildStatusPill(TallyReconciliationRow row) {
+    final Color fg = row.isReconciled ? AppColors.kSuccess : kTallyGold;
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+      decoration: BoxDecoration(
+        color: fg.withOpacity(0.08),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: fg.withOpacity(0.4)),
+      ),
+      child: Text(
+        row.status.toUpperCase(),
+        style: TextStyle(
+          color: fg,
+          fontSize: 9,
+          fontWeight: FontWeight.w900,
+          fontStyle: FontStyle.italic,
+          letterSpacing: 0.5,
+        ),
+      ),
     );
   }
 }

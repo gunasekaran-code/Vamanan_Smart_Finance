@@ -1,71 +1,94 @@
 import 'package:flutter/material.dart';
+import 'package:go_router/go_router.dart';
+import 'package:intl/intl.dart';
 import 'package:frontend/core/theme/app_theme.dart';
-import 'package:frontend/core/theme/confirm_dialog.dart';
 import 'package:frontend/shared/widgets/app_page.dart';
 import 'package:frontend/shared/widgets/app_toast.dart';
-
-// --- Dummy Data Model ---
-class TransactionItem {
-  final String id;
-  final String category;
-  final double amount;
-  final String status;
-  final String date;
-
-  TransactionItem({
-    required this.id,
-    required this.category,
-    required this.amount,
-    required this.status,
-    required this.date,
-  });
-}
+import '../../models/auditor_wallet_model.dart';
+import '../../services/auditor_wallet_service.dart';
+import 'package:frontend/shared/widgets/app_loader.dart';
 
 class AuditorWalletScreen extends StatefulWidget {
-  const AuditorWalletScreen({super.key});
+  // Wire this to however your app currently identifies the logged-in user.
+  final String userId;
+
+  const AuditorWalletScreen({super.key, required this.userId});
 
   @override
   State<AuditorWalletScreen> createState() => _AuditorWalletScreenState();
 }
 
 class _AuditorWalletScreenState extends State<AuditorWalletScreen> {
-  // Exact Colors from your design
   final Color _navyBlue = const Color(0xFF1B233A);
   final Color _lightBorder = const Color(0xFFF1F5F9);
   final Color _slateText = const Color(0xFF94A3B8);
 
-  // Sample Transaction Data
-  final List<TransactionItem> _transactions = [
-    TransactionItem(id: 'TXN-001', category: 'CASHBACK', amount: 5000.00, status: 'CREDITED', date: '04/09/2026'),
-    TransactionItem(id: 'TXN-002', category: 'REFERRAL', amount: 1000.00, status: 'CREDITED', date: '02/09/2026'),
-    TransactionItem(id: 'TXN-003', category: 'WITHDRAWAL', amount: 3000.00, status: 'PENDING', date: '01/09/2026'),
-  ];
+  final _currency = NumberFormat('#,##0', 'en_IN');
+  final _dateFmt = DateFormat('dd/MM/yyyy');
 
-  // --- ACTIONS ---
-  Future<void> _handleWithdraw() async {
-    final confirmed = await AppConfirmDialog.show(
-      context: context,
-      title: 'Initiate Withdrawal',
-      message: 'Are you sure you want to withdraw your available balance to your registered bank account?',
-      confirmLabel: 'Withdraw',
-      confirmButtonColor: AppColors.goldColor,
-    );
+  WalletOverview _overview = WalletOverview.empty();
+  List<WalletTransactionRecord> _transactions = [];
+  bool _loading = true;
+  String? _error;
 
-    if (confirmed == true) {
-      ToastService.show(
-        title: 'Withdrawal Initiated',
-        message: 'Your withdrawal request is being processed.',
-        type: ToastType.success,
-      );
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  Future<void> _load() async {
+    setState(() {
+      _loading = true;
+      _error = null;
+    });
+    try {
+      final overview = await AuditorWalletService.instance.fetchOverview(widget.userId);
+      final txns = await AuditorWalletService.instance.fetchTransactions(widget.userId, limit: 5);
+      setState(() {
+        _overview = overview;
+        _transactions = txns;
+        _loading = false;
+      });
+    } catch (e) {
+      setState(() {
+        _error = e.toString();
+        _loading = false;
+      });
     }
   }
 
+  String _money(double v) => '₹${_currency.format(v)}';
+
+  // --- ACTIONS ---
+  /// Opens the disbursement hub, where the amount and bank details are
+  /// entered. Pushed rather than switched so BACK TO WALLET returns here.
+  void _handleWithdraw() => context.push('/auditor-withdrawals');
+
+  /// Routes the action tiles that have a real destination. Anything without
+  /// one still falls through to the placeholder toast.
   void _handleAction(String actionName) {
-    ToastService.show(
-      title: actionName,
-      message: 'Routing to $actionName module...',
-      type: ToastType.info,
-    );
+    switch (actionName) {
+      case 'BUY GOLD':
+        context.push('/auditor-buy');
+        return;
+      case 'TRANSACTION HISTORY':
+      case 'View All Transactions':
+        context.push('/auditor-transaction');
+        return;
+      case 'VIEW AGREEMENT':
+        context.push('/auditor-agreements');
+        return;
+      case 'REFERRAL LINK':
+        context.push('/auditor-referral');
+        return;
+      default:
+        ToastService.show(
+          title: actionName,
+          message: 'Routing to $actionName module...',
+          type: ToastType.info,
+        );
+    }
   }
 
   @override
@@ -74,34 +97,51 @@ class _AuditorWalletScreenState extends State<AuditorWalletScreen> {
     final isMobile = screenWidth < 700;
 
     return AppPage(
-      title: null, // Custom layout requires no default header
+      title: null,
       children: [
         Center(
           child: Container(
-            constraints: const BoxConstraints(maxWidth: 800),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                // 1. LIVE BALANCE CARD
-                _buildLiveBalanceCard(),
-                const SizedBox(height: 24),
-
-                // 2. STAT CARDS LIST
-                _buildStatCardsList(),
-                const SizedBox(height: 24),
-
-                // 3. ACTION GRID
-                _buildActionGrid(isMobile),
-                const SizedBox(height: 24),
-
-                // 4. RECENT TRANSACTIONS TABLE
-                _buildRecentTransactionsTable(),
-                const SizedBox(height: 40),
-              ],
-            ),
+                        constraints: const BoxConstraints(maxWidth: 800), 
+            child: _loading
+                ? const Padding(
+                    padding: EdgeInsets.symmetric(vertical: 120),
+                    child: Center(child: AppLoader()),
+                  )
+                : _error != null
+                    ? _buildErrorState(_error!)
+                    : Column(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: [
+                          _buildLiveBalanceCard(),
+                          const SizedBox(height: 24),
+                          _buildStatCardsList(),
+                          const SizedBox(height: 24),
+                          _buildActionGrid(isMobile),
+                          const SizedBox(height: 24),
+                          _buildRecentTransactionsTable(),
+                          const SizedBox(height: 40),
+                        ],
+                      ),
           ),
         ),
       ],
+    );
+  }
+
+  Widget _buildErrorState(String message) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 80),
+      child: Column(
+        children: [
+          Icon(Icons.error_outline, size: 40, color: _slateText),
+          const SizedBox(height: 12),
+          Text('COULD NOT LOAD WALLET', style: TextStyle(color: _navyBlue, fontSize: 12, fontWeight: FontWeight.w900, fontStyle: FontStyle.italic, letterSpacing: 1.0)),
+          const SizedBox(height: 6),
+          Text(message, style: TextStyle(color: _slateText, fontSize: 11), textAlign: TextAlign.center),
+          const SizedBox(height: 16),
+          OutlinedButton(onPressed: _load, child: const Text('RETRY')),
+        ],
+      ),
     );
   }
 
@@ -118,61 +158,45 @@ class _AuditorWalletScreenState extends State<AuditorWalletScreen> {
           end: Alignment.bottomRight,
         ),
         borderRadius: BorderRadius.circular(32),
-        boxShadow: [
-          BoxShadow(color: _navyBlue.withOpacity(0.3), blurRadius: 24, offset: const Offset(0, 12))
-        ],
+        boxShadow: [BoxShadow(color: _navyBlue.withOpacity(0.3), blurRadius: 24, offset: const Offset(0, 12))],
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          // Top Badges
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
               Container(
                 padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                decoration: BoxDecoration(
-                  color: Colors.white.withOpacity(0.1),
-                  borderRadius: BorderRadius.circular(20),
-                ),
+                decoration: BoxDecoration(color: Colors.white.withOpacity(0.1), borderRadius: BorderRadius.circular(20)),
                 child: Row(
                   children: const [
-                    Icon(Icons.circle, color: AppColors.goldColor, size: 8),
+                    Icon(Icons.star, color: AppColors.goldColor, size: 8),
                     SizedBox(width: 8),
-                    Text(
-                      'LIVE BALANCE',
-                      style: TextStyle(color: AppColors.goldColor, fontSize: 10, fontWeight: FontWeight.w900, fontStyle: FontStyle.italic, letterSpacing: 1.5),
-                    ),
+                    Text('LIVE BALANCE', style: TextStyle(color: AppColors.goldColor, fontSize: 10, fontWeight: FontWeight.w900, fontStyle: FontStyle.italic, letterSpacing: 1.5)),
                   ],
                 ),
               ),
               Container(
                 padding: const EdgeInsets.all(8),
-                decoration: BoxDecoration(
-                  color: Colors.white.withOpacity(0.1),
-                  borderRadius: BorderRadius.circular(8),
-                ),
+                decoration: BoxDecoration(color: Colors.white.withOpacity(0.1), borderRadius: BorderRadius.circular(8)),
                 child: const Icon(Icons.credit_card, color: AppColors.goldColor, size: 16),
               ),
             ],
           ),
           const SizedBox(height: 32),
-          
-          // Balance Amount
           const Text('AVAILABLE BALANCE', style: TextStyle(color: Colors.white70, fontSize: 11, fontWeight: FontWeight.w900, fontStyle: FontStyle.italic, letterSpacing: 1.0)),
           const SizedBox(height: 4),
           Row(
             crossAxisAlignment: CrossAxisAlignment.baseline,
             textBaseline: TextBaseline.alphabetic,
-            children: const [
-              Text('₹0.00', style: TextStyle(color: Colors.white, fontSize: 48, fontWeight: FontWeight.w900, fontStyle: FontStyle.italic, letterSpacing: -1.0)),
-              SizedBox(width: 8),
-              Text('INR', style: TextStyle(color: AppColors.goldColor, fontSize: 16, fontWeight: FontWeight.w900, fontStyle: FontStyle.italic)),
+            children: [
+              Text(_money(_overview.balance), style: const TextStyle(color: Colors.white, fontSize: 48, fontWeight: FontWeight.w900, fontStyle: FontStyle.italic, letterSpacing: -1.0)),
+              const SizedBox(width: 8),
+              const Text('INR', style: TextStyle(color: AppColors.goldColor, fontSize: 16, fontWeight: FontWeight.w900, fontStyle: FontStyle.italic)),
             ],
           ),
           const SizedBox(height: 40),
-
-          // Action Buttons (Stacked like the screenshot)
           Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
@@ -191,7 +215,7 @@ class _AuditorWalletScreenState extends State<AuditorWalletScreen> {
               ),
               const SizedBox(height: 12),
               OutlinedButton.icon(
-                onPressed: () => _handleAction('Buy Gold'),
+                onPressed: () => _handleAction('BUY GOLD'),
                 icon: const Icon(Icons.bolt, size: 16),
                 label: const Text('BUY GOLD', style: TextStyle(fontWeight: FontWeight.w900, fontStyle: FontStyle.italic, fontSize: 12, letterSpacing: 1.0)),
                 style: OutlinedButton.styleFrom(
@@ -214,13 +238,13 @@ class _AuditorWalletScreenState extends State<AuditorWalletScreen> {
   Widget _buildStatCardsList() {
     return Column(
       children: [
-        _buildListStatCard('TOTAL INVESTED', '₹0', Icons.track_changes, AppColors.goldBadgeBg, AppColors.goldColor),
+        _buildListStatCard('TOTAL INVESTED', _money(_overview.totalInvested), Icons.track_changes, AppColors.goldBadgeBg, AppColors.goldColor),
         const SizedBox(height: 12),
-        _buildListStatCard('CASHBACK EARNED', '₹0', Icons.bolt, AppColors.goldBadgeBg, AppColors.goldColor),
+        _buildListStatCard('CASHBACK EARNED', _money(_overview.cashbackEarnings), Icons.bolt, AppColors.goldBadgeBg, AppColors.goldColor),
         const SizedBox(height: 12),
-        _buildListStatCard('REFERRAL REWARDS', '₹0', Icons.military_tech_outlined, const Color(0xFFEFF6FF), const Color(0xFF3B82F6)),
+        _buildListStatCard('REFERRAL REWARDS', _money(_overview.referralEarnings), Icons.military_tech_outlined, const Color(0xFFEFF6FF), const Color(0xFF3B82F6)),
         const SizedBox(height: 12),
-        _buildListStatCard('PENDING PAYOUTS', '₹0', Icons.access_time, const Color(0xFFEFF6FF), const Color(0xFF3B82F6)),
+        _buildListStatCard('PENDING PAYOUTS', _money(_overview.pendingPayouts), Icons.access_time, const Color(0xFFEFF6FF), const Color(0xFF3B82F6)),
       ],
     );
   }
@@ -296,11 +320,7 @@ class _AuditorWalletScreenState extends State<AuditorWalletScreen> {
               child: Icon(icon, color: iconColor, size: 18),
             ),
             const SizedBox(height: 12),
-            Text(
-              title,
-              textAlign: TextAlign.center,
-              style: TextStyle(color: _navyBlue, fontSize: 10, fontWeight: FontWeight.w900, fontStyle: FontStyle.italic, letterSpacing: 0.5),
-            ),
+            Text(title, textAlign: TextAlign.center, style: TextStyle(color: _navyBlue, fontSize: 10, fontWeight: FontWeight.w900, fontStyle: FontStyle.italic, letterSpacing: 0.5)),
           ],
         ),
       ),
@@ -321,7 +341,6 @@ class _AuditorWalletScreenState extends State<AuditorWalletScreen> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          // Header
           Padding(
             padding: const EdgeInsets.all(24.0),
             child: Row(
@@ -353,8 +372,6 @@ class _AuditorWalletScreenState extends State<AuditorWalletScreen> {
             ),
           ),
           const Divider(height: 1, thickness: 2, color: Color(0xFFF1F5F9)),
-          
-          // Scrollable Data Table
           SingleChildScrollView(
             scrollDirection: Axis.horizontal,
             child: ConstrainedBox(
@@ -375,7 +392,7 @@ class _AuditorWalletScreenState extends State<AuditorWalletScreen> {
                 rows: _transactions.isEmpty
                     ? [
                         const DataRow(cells: [
-                          DataCell(Text('ZERO ACTIVE TRANSMISSIONS DETECTED', style: TextStyle(color: Color(0xFFCBD5E1), fontStyle: FontStyle.italic, fontWeight: FontWeight.w900, fontSize: 10))),
+                          DataCell(Text('NO TRANSACTIONS YET', style: TextStyle(color: Color(0xFFCBD5E1), fontStyle: FontStyle.italic, fontWeight: FontWeight.w900, fontSize: 10))),
                           DataCell(Text('')), DataCell(Text('')), DataCell(Text('')), DataCell(Text('')),
                         ])
                       ]
@@ -389,14 +406,14 @@ class _AuditorWalletScreenState extends State<AuditorWalletScreen> {
     );
   }
 
-  DataRow _buildTransactionRow(TransactionItem txn) {
+  DataRow _buildTransactionRow(WalletTransactionRecord txn) {
     return DataRow(
       cells: [
         DataCell(Text(txn.id, style: TextStyle(color: _navyBlue, fontWeight: FontWeight.w900, fontStyle: FontStyle.italic, fontSize: 12))),
-        DataCell(Text(txn.category, style: TextStyle(color: _slateText, fontWeight: FontWeight.w900, fontStyle: FontStyle.italic, fontSize: 11, letterSpacing: 0.5))),
-        DataCell(Text('₹${txn.amount.toStringAsFixed(2)}', style: TextStyle(color: _navyBlue, fontWeight: FontWeight.w900, fontStyle: FontStyle.italic, fontSize: 13))),
+        DataCell(Text(txn.category.toUpperCase(), style: TextStyle(color: _slateText, fontWeight: FontWeight.w900, fontStyle: FontStyle.italic, fontSize: 11, letterSpacing: 0.5))),
+        DataCell(Text(_money(txn.amount), style: TextStyle(color: _navyBlue, fontWeight: FontWeight.w900, fontStyle: FontStyle.italic, fontSize: 13))),
         DataCell(_buildStatusBadge(txn.status)),
-        DataCell(Text(txn.date, style: TextStyle(color: _slateText, fontWeight: FontWeight.w900, fontStyle: FontStyle.italic, fontSize: 11))),
+        DataCell(Text(txn.date != null ? _dateFmt.format(txn.date!) : '-', style: TextStyle(color: _slateText, fontWeight: FontWeight.w900, fontStyle: FontStyle.italic, fontSize: 11))),
       ],
     );
   }
@@ -405,11 +422,11 @@ class _AuditorWalletScreenState extends State<AuditorWalletScreen> {
     Color bg = AppColors.goldBadgeBg;
     Color text = AppColors.goldColor;
 
-    if (status == 'CREDITED') {
+    if (status == 'CREDITED' || status == 'COMPLETED') {
       bg = const Color(0xFFF0FDF4); text = const Color(0xFF16A34A);
     } else if (status == 'PENDING') {
       bg = const Color(0xFFFFFBEB); text = AppColors.goldColor;
-    } else if (status == 'FAILED') {
+    } else if (status == 'FAILED' || status == 'REJECTED') {
       bg = const Color(0xFFFEF2F2); text = const Color(0xFFDC2626);
     }
 

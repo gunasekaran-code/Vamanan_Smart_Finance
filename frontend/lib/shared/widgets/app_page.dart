@@ -24,33 +24,39 @@ class AppPage extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    // Screens that draw their own header pass `title: null`; skip the empty
+    // title row and its spacing so no blank band appears above the content.
+    final hasHeader =
+        title != null || subtitle != null || subtitleWidget != null;
+
     return ColoredBox(
       color: AppColors.kBackground,
       child: ListView(
         padding: const EdgeInsets.fromLTRB(20, 20, 20, 32),
         children: [
-          Row(
-            children: [
-              if (titleIcon != null) ...[
-                Icon(
-                  titleIcon,
-                  color: AppColors.kPrimary,
-                  size: 26,
-                ),
-                const SizedBox(width: 10),
-              ],
-              Expanded(
-                child: Text(
-                  title ?? '',
-                  style: const TextStyle(
-                    fontSize: 22,
-                    fontWeight: FontWeight.w800,
-                    color: AppColors.kTextDark,
+          if (title != null)
+            Row(
+              children: [
+                if (titleIcon != null) ...[
+                  Icon(
+                    titleIcon,
+                    color: AppColors.kPrimary,
+                    size: 26,
+                  ),
+                  const SizedBox(width: 10),
+                ],
+                Expanded(
+                  child: Text(
+                    title ?? '',
+                    style: const TextStyle(
+                      fontSize: 22,
+                      fontWeight: FontWeight.w800,
+                      color: AppColors.kTextDark,
+                    ),
                   ),
                 ),
-              ),
-            ],
-          ),
+              ],
+            ),
           if (subtitle != null) ...[
             const SizedBox(height: 4),
             Text(
@@ -64,7 +70,7 @@ class AppPage extends StatelessWidget {
             const SizedBox(height: 4),
             subtitleWidget!,
           ],
-          const SizedBox(height: 20),
+          if (hasHeader) const SizedBox(height: 20),
           ...children,
         ],
       ),

@@ -2,23 +2,9 @@ import 'package:flutter/material.dart';
 import 'package:frontend/core/theme/app_theme.dart';
 import 'package:frontend/core/theme/confirm_dialog.dart';
 import 'package:frontend/shared/widgets/app_toast.dart';
-
-// --- Data Model ---
-class HolidayEntry {
-  final String id;
-  final String date;
-  final String day;
-  final String name;
-  final String type;
-
-  HolidayEntry({
-    required this.id,
-    required this.date,
-    required this.day,
-    required this.name,
-    required this.type,
-  });
-}
+import '../../models/holiday_model.dart';
+import '../../services/holiday_service.dart';
+import 'package:frontend/shared/widgets/app_loader.dart';
 
 class HolidaysScreen extends StatefulWidget {
   const HolidaysScreen({super.key});
@@ -28,33 +14,42 @@ class HolidaysScreen extends StatefulWidget {
 }
 
 class _HolidaysScreenState extends State<HolidaysScreen> {
-  // Form & Settings State
   bool _skipWeekends = true;
   String _selectedType = 'GOVERNMENT';
-  final TextEditingController _dateController = TextEditingController(text: '02/09/2026');
+  DateTime? _selectedDate;
   final TextEditingController _nameController = TextEditingController();
 
-  final List<String> _holidayTypes = ['GOVERNMENT', 'COMPANY', 'OPTIONAL'];
+  final List<String> _holidayTypes = ['GOVERNMENT', 'BANK', 'WEEKEND', 'OTHER'];
 
-  // Mock Data
-  final List<HolidayEntry> _holidays = [
-    HolidayEntry(
-      id: '1',
-      date: '15 Aug\n2026',
-      day: 'Saturday',
-      name: 'Independence\nDay',
-      type: 'GOVERNMENT',
-    ),
-  ];
+  List<HolidayEntry> _holidays = [];
+  bool _isLoading = true;
+  bool _isSaving = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadHolidays();
+  }
 
   @override
   void dispose() {
-    _dateController.dispose();
     _nameController.dispose();
     super.dispose();
   }
 
-  // --- Action Handlers ---
+  Future<void> _loadHolidays() async {
+    setState(() => _isLoading = true);
+    try {
+      final holidays = await HolidayService.instance.fetchHolidays();
+      if (mounted) setState(() => _holidays = holidays);
+    } catch (e) {
+      if (mounted) {
+        ToastService.show(title: 'Error', message: 'Could not load holidays: $e', type: ToastType.error);
+      }
+    } finally {
+      if (mounted) setState(() => _isLoading = false);
+    }
+  }
 
   Future<void> _handleProcessYield() async {
     final confirmed = await AppConfirmDialog.show(
@@ -71,24 +66,38 @@ class _HolidaysScreenState extends State<HolidaysScreen> {
     }
   }
 
-  void _handleAddHoliday() {
-    if (_dateController.text.isEmpty || _nameController.text.isEmpty) {
+  Future<void> _pickDate() async {
+    final picked = await showDatePicker(
+      context: context,
+      initialDate: _selectedDate ?? DateTime.now(),
+      firstDate: DateTime(DateTime.now().year - 1),
+      lastDate: DateTime(DateTime.now().year + 5),
+    );
+    if (picked != null) setState(() => _selectedDate = picked);
+  }
+
+  Future<void> _handleAddHoliday() async {
+    if (_selectedDate == null || _nameController.text.isEmpty) {
       ToastService.show(title: 'Validation Error', message: 'Please provide both a date and a holiday name.', type: ToastType.error);
       return;
     }
 
-    setState(() {
-      _holidays.add(HolidayEntry(
-        id: DateTime.now().millisecondsSinceEpoch.toString(),
-        date: _dateController.text.replaceAll('/', ' '), // Simplistic format for demo
-        day: 'Selected Day',
+    setState(() => _isSaving = true);
+    try {
+      await HolidayService.instance.addHoliday(
+        date: _selectedDate!,
         name: _nameController.text,
         type: _selectedType,
-      ));
+      );
       _nameController.clear();
-    });
-
-    ToastService.show(title: 'Holiday Added', message: 'The holiday has been added to the calendar.', type: ToastType.success);
+      setState(() => _selectedDate = null);
+      await _loadHolidays();
+      ToastService.show(title: 'Holiday Added', message: 'The holiday has been added to the calendar.', type: ToastType.success);
+    } catch (e) {
+      ToastService.show(title: 'Error', message: 'Could not save holiday: $e', type: ToastType.error);
+    } finally {
+      if (mounted) setState(() => _isSaving = false);
+    }
   }
 
   Future<void> _handleRemoveHoliday(HolidayEntry holiday) async {
@@ -101,11 +110,14 @@ class _HolidaysScreenState extends State<HolidaysScreen> {
       confirmButtonColor: AppColors.kDanger,
     );
 
-    if (confirmed == true) {
-      setState(() {
-        _holidays.removeWhere((h) => h.id == holiday.id);
-      });
+    if (confirmed != true) return;
+
+    try {
+      await HolidayService.instance.deleteHoliday(holiday.id);
+      setState(() => _holidays.removeWhere((h) => h.id == holiday.id));
       ToastService.show(title: 'Holiday Removed', message: 'The holiday has been successfully removed.', type: ToastType.success);
+    } catch (e) {
+      ToastService.show(title: 'Error', message: 'Could not remove holiday: $e', type: ToastType.error);
     }
   }
 
@@ -119,7 +131,6 @@ class _HolidaysScreenState extends State<HolidaysScreen> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              // --- 1. Global Search Bar ---
               Container(
                 decoration: BoxDecoration(
                   color: Colors.white,
@@ -138,7 +149,6 @@ class _HolidaysScreenState extends State<HolidaysScreen> {
               ),
               const SizedBox(height: 24),
 
-              // --- 2. Process Monthly Yield Button ---
               Align(
                 alignment: Alignment.centerRight,
                 child: ElevatedButton.icon(
@@ -146,7 +156,7 @@ class _HolidaysScreenState extends State<HolidaysScreen> {
                   icon: const Icon(Icons.bolt, size: 16),
                   label: const Text('PROCESS MONTHLY YIELD', style: TextStyle(fontWeight: FontWeight.w900, fontStyle: FontStyle.italic, fontSize: 12, letterSpacing: 0.5)),
                   style: ElevatedButton.styleFrom(
-                    backgroundColor: const Color(0xFF1E3A8A), // Navy Blue
+                    backgroundColor: const Color(0xFF1E3A8A),
                     foregroundColor: Colors.white,
                     padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
                     shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
@@ -157,7 +167,6 @@ class _HolidaysScreenState extends State<HolidaysScreen> {
               ),
               const SizedBox(height: 24),
 
-              // --- 3. Holiday Calendar Header Card ---
               Container(
                 decoration: BoxDecoration(
                   color: Colors.white,
@@ -172,10 +181,7 @@ class _HolidaysScreenState extends State<HolidaysScreen> {
                       children: [
                         Container(
                           padding: const EdgeInsets.all(12),
-                          decoration: BoxDecoration(
-                            color: const Color(0xFF1E3A8A), // Navy Blue
-                            borderRadius: BorderRadius.circular(12),
-                          ),
+                          decoration: BoxDecoration(color: const Color(0xFF1E3A8A), borderRadius: BorderRadius.circular(12)),
                           child: const Icon(Icons.calendar_today_outlined, color: Colors.white, size: 24),
                         ),
                         const SizedBox(width: 16),
@@ -192,12 +198,10 @@ class _HolidaysScreenState extends State<HolidaysScreen> {
                       ],
                     ),
                     const SizedBox(height: 24),
-                    
-                    // Critical Note Banner
                     Container(
                       padding: const EdgeInsets.all(20),
                       decoration: BoxDecoration(
-                        color: const Color(0xFFFFFBEB), // Light amber tint
+                        color: const Color(0xFFFFFBEB),
                         borderRadius: BorderRadius.circular(16),
                         border: Border.all(color: const Color(0xFFFDE68A)),
                       ),
@@ -209,14 +213,7 @@ class _HolidaysScreenState extends State<HolidaysScreen> {
                           Expanded(
                             child: Text(
                               'NOTE: THE CASHBACK PLAN IS CURRENTLY MONTHLY (10% × 10 MONTHS = 100%), PAID ONCE PER CALENDAR MONTH — SO WEEKENDS & HOLIDAYS DO NOT AFFECT CASHBACK. THIS CALENDAR IS RETAINED FOR REFERENCE AND FOR ANY OPERATIONAL (PAYOUT / WORKING-DAY) USE.',
-                              style: TextStyle(
-                                fontSize: 10,
-                                fontWeight: FontWeight.w900,
-                                fontStyle: FontStyle.italic,
-                                color: const Color(0xFFD97706).withOpacity(0.9), // Amber text
-                                height: 1.6,
-                                letterSpacing: 0.5,
-                              ),
+                              style: TextStyle(fontSize: 10, fontWeight: FontWeight.w900, fontStyle: FontStyle.italic, color: const Color(0xFFD97706).withOpacity(0.9), height: 1.6, letterSpacing: 0.5),
                             ),
                           ),
                         ],
@@ -227,7 +224,6 @@ class _HolidaysScreenState extends State<HolidaysScreen> {
               ),
               const SizedBox(height: 16),
 
-              // --- 4. Skip Weekends Toggle Card ---
               Container(
                 decoration: BoxDecoration(
                   color: Colors.white,
@@ -255,14 +251,13 @@ class _HolidaysScreenState extends State<HolidaysScreen> {
                         ToastService.show(title: 'Settings Updated', message: 'Weekend skipping is now ${val ? 'enabled' : 'disabled'}.', type: ToastType.info);
                       },
                       activeColor: Colors.white,
-                      activeTrackColor: const Color(0xFFD97706), // Gold/Amber track
+                      activeTrackColor: const Color(0xFFD97706),
                     ),
                   ],
                 ),
               ),
               const SizedBox(height: 16),
 
-              // --- 5. Add Holiday Form Card ---
               Container(
                 decoration: BoxDecoration(
                   color: Colors.white,
@@ -276,7 +271,7 @@ class _HolidaysScreenState extends State<HolidaysScreen> {
                     const Text('ADD A HOLIDAY', style: TextStyle(fontSize: 14, fontWeight: FontWeight.w900, fontStyle: FontStyle.italic, color: Color(0xFF1E3A8A), letterSpacing: 1.5)),
                     const SizedBox(height: 24),
 
-                    _buildInputField(label: 'DATE', controller: _dateController, hintText: 'DD/MM/YYYY'),
+                    _buildDateField(),
                     const SizedBox(height: 16),
                     _buildInputField(label: 'HOLIDAY NAME', controller: _nameController, hintText: 'e.g. Diwali / Republic Day', isLightHint: true),
                     const SizedBox(height: 16),
@@ -284,11 +279,13 @@ class _HolidaysScreenState extends State<HolidaysScreen> {
                     const SizedBox(height: 24),
 
                     ElevatedButton.icon(
-                      onPressed: _handleAddHoliday,
-                      icon: const Icon(Icons.add, size: 16),
-                      label: const Text('ADD HOLIDAY', style: TextStyle(fontWeight: FontWeight.w900, fontStyle: FontStyle.italic, fontSize: 11, letterSpacing: 1.5)),
+                      onPressed: _isSaving ? null : _handleAddHoliday,
+                      icon: _isSaving
+                          ? const SizedBox(width: 14, height: 14, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
+                          : const Icon(Icons.add, size: 16),
+                      label: Text(_isSaving ? 'SAVING...' : 'ADD HOLIDAY', style: const TextStyle(fontWeight: FontWeight.w900, fontStyle: FontStyle.italic, fontSize: 11, letterSpacing: 1.5)),
                       style: ElevatedButton.styleFrom(
-                        backgroundColor: const Color(0xFF1E3A8A), // Navy Blue
+                        backgroundColor: const Color(0xFF1E3A8A),
                         foregroundColor: Colors.white,
                         padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
                         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
@@ -300,7 +297,6 @@ class _HolidaysScreenState extends State<HolidaysScreen> {
               ),
               const SizedBox(height: 16),
 
-              // --- 6. Configured Holidays Data Table ---
               Container(
                 decoration: BoxDecoration(
                   color: Colors.white,
@@ -310,71 +306,73 @@ class _HolidaysScreenState extends State<HolidaysScreen> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
-                    Padding(
-                      padding: const EdgeInsets.all(24.0),
-                      child: const Text('CONFIGURED HOLIDAYS', style: TextStyle(fontSize: 14, fontWeight: FontWeight.w900, fontStyle: FontStyle.italic, color: Color(0xFF1E3A8A), letterSpacing: 1.5)),
+                    const Padding(
+                      padding: EdgeInsets.all(24.0),
+                      child: Text('CONFIGURED HOLIDAYS', style: TextStyle(fontSize: 14, fontWeight: FontWeight.w900, fontStyle: FontStyle.italic, color: Color(0xFF1E3A8A), letterSpacing: 1.5)),
                     ),
                     const Divider(height: 1, color: AppColors.kBorder),
 
-                    // Scrollable Table
-                    SingleChildScrollView(
-                      scrollDirection: Axis.horizontal,
-                      child: ConstrainedBox(
-                        constraints: BoxConstraints(minWidth: MediaQuery.of(context).size.width - 48),
-                        child: DataTable(
-                          columnSpacing: 32,
-                          headingRowHeight: 56,
-                          dataRowMinHeight: 80,
-                          dataRowMaxHeight: 80,
-                          dividerThickness: 1,
-                          headingTextStyle: const TextStyle(fontWeight: FontWeight.w900, fontStyle: FontStyle.italic, color: Color(0xFF94A3B8), fontSize: 10, letterSpacing: 1.5),
-                          columns: const [
-                            DataColumn(label: Text('DATE')),
-                            DataColumn(label: Text('DAY')),
-                            DataColumn(label: Text('NAME')),
-                            DataColumn(label: Text('TYPE')),
-                            DataColumn(label: Text('ACTION')),
-                          ],
-                          rows: _holidays.map((holiday) {
-                            return DataRow(
-                              cells: [
-                                DataCell(Text(holiday.date, style: const TextStyle(fontWeight: FontWeight.w900, fontStyle: FontStyle.italic, color: Color(0xFF1E3A8A), fontSize: 13, height: 1.4))),
-                                DataCell(Text(holiday.day, style: const TextStyle(fontWeight: FontWeight.w900, fontStyle: FontStyle.italic, color: Color(0xFF94A3B8), fontSize: 12))),
-                                DataCell(Text(holiday.name, style: const TextStyle(fontWeight: FontWeight.w900, fontStyle: FontStyle.italic, color: Color(0xFF1E3A8A), fontSize: 13, height: 1.4))),
-                                DataCell(
-                                  Container(
-                                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-                                    decoration: BoxDecoration(color: const Color(0xFFEFF6FF), borderRadius: BorderRadius.circular(16), border: Border.all(color: const Color(0xFFBFDBFE))),
-                                    child: Text(holiday.type, style: const TextStyle(color: Color(0xFF3B82F6), fontSize: 8, fontWeight: FontWeight.w900, fontStyle: FontStyle.italic, letterSpacing: 0.5)),
-                                  ),
-                                ),
-                                DataCell(
-                                  OutlinedButton.icon(
-                                    onPressed: () => _handleRemoveHoliday(holiday),
-                                    icon: const Icon(Icons.delete_outline, size: 14),
-                                    label: const Text('REMOVE', style: TextStyle(fontWeight: FontWeight.w900, fontStyle: FontStyle.italic, fontSize: 9)),
-                                    style: OutlinedButton.styleFrom(
-                                      foregroundColor: const Color(0xFFEF4444), // Red
-                                      backgroundColor: const Color(0xFFFEF2F2), // Light Red Bg
-                                      side: const BorderSide(color: Color(0xFFFECACA)), // Light Red Border
-                                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-                                    ),
-                                  ),
-                                ),
-                              ],
-                            );
-                          }).toList(),
-                        ),
-                      ),
-                    ),
-                    if (_holidays.isEmpty)
+                    if (_isLoading)
+                      const Padding(
+                        padding: EdgeInsets.symmetric(vertical: 40),
+                        child: Center(child: AppLoader()),
+                      )
+                    else if (_holidays.isEmpty)
                       const Padding(
                         padding: EdgeInsets.symmetric(vertical: 40),
                         child: Center(
-                          child: Text(
-                            'NO HOLIDAYS CONFIGURED',
-                            style: TextStyle(fontWeight: FontWeight.w900, fontStyle: FontStyle.italic, color: AppColors.kTextMuted, letterSpacing: 1),
+                          child: Text('NO HOLIDAYS CONFIGURED', style: TextStyle(fontWeight: FontWeight.w900, fontStyle: FontStyle.italic, color: AppColors.kTextMuted, letterSpacing: 1)),
+                        ),
+                      )
+                    else
+                      SingleChildScrollView(
+                        scrollDirection: Axis.horizontal,
+                        child: ConstrainedBox(
+                          constraints: BoxConstraints(minWidth: MediaQuery.of(context).size.width - 48),
+                          child: DataTable(
+                            columnSpacing: 32,
+                            headingRowHeight: 56,
+                            dataRowMinHeight: 80,
+                            dataRowMaxHeight: 80,
+                            dividerThickness: 1,
+                            headingTextStyle: const TextStyle(fontWeight: FontWeight.w900, fontStyle: FontStyle.italic, color: Color(0xFF94A3B8), fontSize: 10, letterSpacing: 1.5),
+                            columns: const [
+                              DataColumn(label: Text('DATE')),
+                              DataColumn(label: Text('DAY')),
+                              DataColumn(label: Text('NAME')),
+                              DataColumn(label: Text('TYPE')),
+                              DataColumn(label: Text('ACTION')),
+                            ],
+                            rows: _holidays.map((holiday) {
+                              return DataRow(
+                                cells: [
+                                  DataCell(Text(holiday.formattedDate, style: const TextStyle(fontWeight: FontWeight.w900, fontStyle: FontStyle.italic, color: Color(0xFF1E3A8A), fontSize: 13, height: 1.4))),
+                                  DataCell(Text(holiday.day, style: const TextStyle(fontWeight: FontWeight.w900, fontStyle: FontStyle.italic, color: Color(0xFF94A3B8), fontSize: 12))),
+                                  DataCell(Text(holiday.name, style: const TextStyle(fontWeight: FontWeight.w900, fontStyle: FontStyle.italic, color: Color(0xFF1E3A8A), fontSize: 13, height: 1.4))),
+                                  DataCell(
+                                    Container(
+                                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                                      decoration: BoxDecoration(color: const Color(0xFFEFF6FF), borderRadius: BorderRadius.circular(16), border: Border.all(color: const Color(0xFFBFDBFE))),
+                                      child: Text(holiday.type, style: const TextStyle(color: Color(0xFF3B82F6), fontSize: 8, fontWeight: FontWeight.w900, fontStyle: FontStyle.italic, letterSpacing: 0.5)),
+                                    ),
+                                  ),
+                                  DataCell(
+                                    OutlinedButton.icon(
+                                      onPressed: () => _handleRemoveHoliday(holiday),
+                                      icon: const Icon(Icons.delete_outline, size: 14),
+                                      label: const Text('REMOVE', style: TextStyle(fontWeight: FontWeight.w900, fontStyle: FontStyle.italic, fontSize: 9)),
+                                      style: OutlinedButton.styleFrom(
+                                        foregroundColor: const Color(0xFFEF4444),
+                                        backgroundColor: const Color(0xFFFEF2F2),
+                                        side: const BorderSide(color: Color(0xFFFECACA)),
+                                        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                                      ),
+                                    ),
+                                  ),
+                                ],
+                              );
+                            }).toList(),
                           ),
                         ),
                       ),
@@ -389,7 +387,38 @@ class _HolidaysScreenState extends State<HolidaysScreen> {
     );
   }
 
-  // --- Helper Widgets for Form Inputs ---
+  Widget _buildDateField() {
+    final label = _selectedDate == null
+        ? 'DD/MM/YYYY'
+        : '${_selectedDate!.day.toString().padLeft(2, '0')}/${_selectedDate!.month.toString().padLeft(2, '0')}/${_selectedDate!.year}';
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const Text('DATE', style: TextStyle(fontSize: 10, fontWeight: FontWeight.w900, fontStyle: FontStyle.italic, color: Color(0xFF94A3B8), letterSpacing: 1)),
+        const SizedBox(height: 8),
+        InkWell(
+          onTap: _pickDate,
+          borderRadius: BorderRadius.circular(12),
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
+            decoration: BoxDecoration(
+              color: const Color(0xFFF8FAFC),
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(color: AppColors.kBorder),
+            ),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Text(label, style: TextStyle(fontSize: 14, fontWeight: FontWeight.w900, fontStyle: FontStyle.italic, color: _selectedDate == null ? const Color(0xFF94A3B8) : const Color(0xFF1E3A8A))),
+                const Icon(Icons.calendar_month_outlined, size: 18, color: Color(0xFF1E3A8A)),
+              ],
+            ),
+          ),
+        ),
+      ],
+    );
+  }
 
   Widget _buildInputField({
     required String label,
@@ -407,12 +436,7 @@ class _HolidaysScreenState extends State<HolidaysScreen> {
           style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w900, fontStyle: FontStyle.italic, color: Color(0xFF1E3A8A)),
           decoration: InputDecoration(
             hintText: hintText,
-            hintStyle: TextStyle(
-              color: isLightHint ? const Color(0xFFCBD5E1) : const Color(0xFF94A3B8), 
-              fontWeight: FontWeight.w900, 
-              fontStyle: FontStyle.italic, 
-              fontSize: 13
-            ),
+            hintStyle: TextStyle(color: isLightHint ? const Color(0xFFCBD5E1) : const Color(0xFF94A3B8), fontWeight: FontWeight.w900, fontStyle: FontStyle.italic, fontSize: 13),
             fillColor: const Color(0xFFF8FAFC),
             filled: true,
             contentPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
@@ -444,9 +468,7 @@ class _HolidaysScreenState extends State<HolidaysScreen> {
             enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: const BorderSide(color: AppColors.kBorder)),
             focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: const BorderSide(color: Color(0xFF1E3A8A))),
           ),
-          items: items.map((item) {
-            return DropdownMenuItem(value: item, child: Text(item));
-          }).toList(),
+          items: items.map((item) => DropdownMenuItem(value: item, child: Text(item))).toList(),
         ),
       ],
     );

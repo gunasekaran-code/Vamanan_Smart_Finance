@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:frontend/core/theme/app_theme.dart';
 import 'package:frontend/core/theme/confirm_dialog.dart';
 import 'package:frontend/shared/widgets/app_toast.dart';
+import 'package:frontend/services/settings_service.dart';
+import 'package:frontend/shared/widgets/app_loader.dart';
 
 class SecurityProtocolsWidget extends StatefulWidget {
   const SecurityProtocolsWidget({super.key});
@@ -13,6 +15,37 @@ class SecurityProtocolsWidget extends StatefulWidget {
 class _SecurityProtocolsWidgetState extends State<SecurityProtocolsWidget> {
   // Mock State
   bool _isOperational = true;
+  bool _isLoading = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadState();
+  }
+
+  Future<void> _loadState() async {
+    try {
+      final settings = await SettingsService.instance.fetchSettings();
+      if (!mounted) return;
+      setState(() {
+        _isOperational = settings.value('maintenance_mode', '0') != '1';
+        _isLoading = false;
+      });
+    } catch (error) {
+      if (mounted) setState(() => _isLoading = false);
+      ToastService.show(title: 'Load Failed', message: error.toString(), type: ToastType.error);
+    }
+  }
+
+  Future<void> _saveState(bool operational) async {
+    try {
+      await SettingsService.instance.saveSettings({'maintenance_mode': operational ? '0' : '1'});
+    } catch (error) {
+      if (!mounted) return;
+      setState(() => _isOperational = !operational);
+      ToastService.show(title: 'Save Failed', message: error.toString(), type: ToastType.error);
+    }
+  }
 
   // --- Handlers ---
 
@@ -30,6 +63,7 @@ class _SecurityProtocolsWidgetState extends State<SecurityProtocolsWidget> {
 
     if (confirmed == true) {
       setState(() => _isOperational = false);
+      await _saveState(false);
       ToastService.show(
         title: 'Protocol Severed', 
         message: 'System is now offline. Node access restricted.', 
@@ -52,6 +86,7 @@ class _SecurityProtocolsWidgetState extends State<SecurityProtocolsWidget> {
 
     if (confirmed == true) {
       setState(() => _isOperational = true);
+      await _saveState(true);
       ToastService.show(
         title: 'System Restored', 
         message: 'Platform operations are back online.', 
@@ -69,7 +104,9 @@ class _SecurityProtocolsWidgetState extends State<SecurityProtocolsWidget> {
         border: Border.all(color: AppColors.kBorder),
       ),
       padding: const EdgeInsets.all(32.0),
-      child: Column(
+        child: _isLoading
+          ? const Center(child: AppLoader())
+          : Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           // --- 1. Platform State Override Card ---

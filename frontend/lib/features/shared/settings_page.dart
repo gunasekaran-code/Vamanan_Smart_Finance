@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:frontend/core/theme/app_theme.dart';
 import 'package:frontend/core/theme/confirm_dialog.dart';
 import 'package:frontend/shared/widgets/app_toast.dart';
+import 'package:frontend/core/services/session_service.dart';
+import 'package:frontend/services/settings_service.dart';
 import 'company_node_widget.dart';
 import 'security_protocols_widget.dart';
 import 'finance_parameters_widget.dart';
@@ -32,6 +34,17 @@ class _SystemSettingsScreenState extends State<SystemSettingsScreen> {
     'ACCESS CONTROL',
   ];
 
+  bool _isProfileSaving = false;
+  bool _isSecurityKeyHidden = true;
+
+  @override
+  void initState() {
+    super.initState();
+    final user = SessionService.instance.currentUser;
+    _adminNameController.text = user?.name ?? '';
+    _nodeEmailController.text = user?.email ?? '';
+  }
+
   @override
   void dispose() {
     _adminNameController.dispose();
@@ -53,25 +66,45 @@ class _SystemSettingsScreenState extends State<SystemSettingsScreen> {
     );
 
     if (confirmed == true) {
-      ToastService.show(
+      try {
+        await SettingsService.instance.processMonthlyYield();
+        if (!mounted) return;
+        ToastService.show(
         title: 'Success', 
         message: 'Monthly yield processed successfully.', 
         type: ToastType.success
-      );
+        );
+      } catch (error) {
+        if (mounted) ToastService.show(title: 'Process Failed', message: error.toString(), type: ToastType.error);
+      }
     }
   }
 
-  void _handleSynchronizeProfile() {
-    ToastService.show(
+  Future<void> _handleSynchronizeProfile() async {
+    if (_adminNameController.text.trim().isEmpty || _nodeEmailController.text.trim().isEmpty) {
+      ToastService.show(title: 'Validation Error', message: 'Administrator name and email are required.', type: ToastType.error);
+      return;
+    }
+    setState(() => _isProfileSaving = true);
+    try {
+      await SettingsService.instance.updateAdminProfile(
+        name: _adminNameController.text.trim(),
+        email: _nodeEmailController.text.trim(),
+        password: _securityKeyController.text,
+      );
+      if (!mounted) return;
+      ToastService.show(
       title: 'Profile Synchronized', 
       message: 'Administrator profile parameters have been updated across all nodes.', 
       type: ToastType.success
-    );
+      );
     
-    // Clear password field after save
-    setState(() {
       _securityKeyController.clear();
-    });
+    } catch (error) {
+      if (mounted) ToastService.show(title: 'Save Failed', message: error.toString(), type: ToastType.error);
+    } finally {
+      if (mounted) setState(() => _isProfileSaving = false);
+    }
   }
 
   @override
@@ -213,7 +246,7 @@ class _SystemSettingsScreenState extends State<SystemSettingsScreen> {
       case 'FINANCE PARAMETERS': return Icons.bolt;
       case 'PAYMENT GATEWAY': return Icons.payment;
       case 'ACCESS CONTROL': return Icons.vpn_key_outlined;
-      default: return Icons.circle_outlined;
+      default: return Icons.star_outlined;
     }
   }
 
@@ -393,7 +426,8 @@ class _SystemSettingsScreenState extends State<SystemSettingsScreen> {
           _buildInputField(
             'UPDATE SECURITY KEY (LEAVE BLANK TO\nMAINTAIN CURRENT)', 
             _securityKeyController, 
-            isObscure: true,
+            isObscure: _isSecurityKeyHidden,
+            onToggleObscure: () => setState(() => _isSecurityKeyHidden = !_isSecurityKeyHidden),
             hintText: '••••••••',
             maxWidth: 400, // Limit width on large screens to match design proportion
           ),
@@ -403,7 +437,7 @@ class _SystemSettingsScreenState extends State<SystemSettingsScreen> {
           Align(
             alignment: Alignment.centerRight,
             child: ElevatedButton.icon(
-              onPressed: _handleSynchronizeProfile,
+              onPressed: _isProfileSaving ? null : _handleSynchronizeProfile,
               icon: const Icon(Icons.save, size: 16),
               label: const Text('SYNCHRONIZE PROFILE', style: TextStyle(fontWeight: FontWeight.w900, fontStyle: FontStyle.italic, fontSize: 13, letterSpacing: 1.5)),
               style: ElevatedButton.styleFrom(
@@ -472,7 +506,7 @@ class _SystemSettingsScreenState extends State<SystemSettingsScreen> {
     );
   }
 
-  Widget _buildInputField(String label, TextEditingController controller, {bool isObscure = false, String? hintText, double? maxWidth}) {
+  Widget _buildInputField(String label, TextEditingController controller, {bool isObscure = false, VoidCallback? onToggleObscure, String? hintText, double? maxWidth}) {
     Widget inputContent = Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -498,6 +532,20 @@ class _SystemSettingsScreenState extends State<SystemSettingsScreen> {
             fillColor: const Color(0xFFF8FAFC),
             filled: true,
             contentPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 20),
+            suffixIcon: onToggleObscure == null
+                ? null
+                : Padding(
+                    padding: const EdgeInsets.only(right: 8),
+                    child: IconButton(
+                      onPressed: onToggleObscure,
+                      tooltip: isObscure ? 'Show password' : 'Hide password',
+                      icon: Icon(
+                        isObscure ? Icons.visibility_off_outlined : Icons.visibility_outlined,
+                        color: AppColors.kTextMuted,
+                        size: 20,
+                      ),
+                    ),
+                  ),
             border: OutlineInputBorder(borderRadius: BorderRadius.circular(16), borderSide: const BorderSide(color: AppColors.kBorder)),
             enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(16), borderSide: const BorderSide(color: AppColors.kBorder)),
             focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(16), borderSide: const BorderSide(color: Color(0xFF1E3A8A))),

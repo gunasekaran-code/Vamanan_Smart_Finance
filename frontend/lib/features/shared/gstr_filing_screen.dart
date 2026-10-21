@@ -1,6 +1,14 @@
+import 'package:csv/csv.dart';
 import 'package:flutter/material.dart';
 import 'package:frontend/core/theme/app_theme.dart';
-import 'package:frontend/shared/widgets/stat_card.dart'; // From your previous import
+import 'package:frontend/core/theme/confirm_dialog.dart';
+import 'package:frontend/core/utils/csv_file_saver.dart';
+import 'package:frontend/shared/widgets/app_toast.dart';
+import 'package:intl/intl.dart';
+import 'package:frontend/shared/widgets/stat_card.dart';
+import 'package:frontend/models/gst_filing_model.dart';
+import 'package:frontend/services/gst_filing_service.dart';
+import 'package:frontend/shared/widgets/app_loader.dart';
 
 class GstrFilingScreen extends StatefulWidget {
   const GstrFilingScreen({super.key});
@@ -13,87 +21,318 @@ class _GstrFilingScreenState extends State<GstrFilingScreen> {
   static const Color _navyBlue = Color(0xFF223573);
   static const Color _gold = Color(0xFFC59B27);
   static const Color _bgLight = Color(0xFFF7F9FC);
-  
-  // State to manage which tab is currently active
+
+  final GstFilingService _service = GstFilingService.instance;
+
   bool _isGstr1Active = true;
+  bool _loading = true;
+  String? _error;
+  GstFilingReport _report = GstFilingReport.empty;
+
+  bool _exporting = false;
+
+  String _selectedMonth = 'ALL TIME';
+  String _query = '';
+
+  @override
+  void initState() {
+    super.initState();
+    _loadReport();
+  }
+
+  // --------------------------------------------------------------------------
+  // DATA LOADING
+  // --------------------------------------------------------------------------
+  Future<void> _loadReport({bool silent = false}) async {
+    if (!silent) {
+      setState(() {
+        _loading = true;
+        _error = null;
+      });
+    }
+
+    final month = _selectedMonth == 'ALL TIME' ? null : _selectedMonth;
+    final response = await _service.fetchReport(month: month);
+
+    if (!mounted) return;
+
+    if (response.success && response.data != null) {
+      setState(() {
+        _report = response.data!;
+        _loading = false;
+        _error = null;
+      });
+    } else {
+      setState(() {
+        _loading = false;
+        _error = response.message ?? 'Unable to load GST filing report.';
+      });
+    }
+  }
+
+  List<GstOrder> get _filteredOrders => _applySearch(_report.orders);
+
+  List<GstOrder> _applySearch(List<GstOrder> orders) {
+    if (_query.trim().isEmpty) return orders;
+    final q = _query.trim().toLowerCase();
+    return orders.where((o) {
+      return o.customerName.toLowerCase().contains(q) ||
+          o.invoiceNo.toLowerCase().contains(q) ||
+          o.productName.toLowerCase().contains(q);
+    }).toList();
+  }
+
+  // --------------------------------------------------------------------------
+  // CSV EXPORT
+  // --------------------------------------------------------------------------
+  Future<void> _exportCsv() async {
+    if (_exporting || _loading) return;
+
+    if (_filteredOrders.isEmpty) {
+      ToastService.show(
+        title: 'Nothing to export',
+        message: _report.orders.isEmpty
+            ? 'There are no GST invoices for this period.'
+            : 'No invoices match your search.',
+        type: ToastType.info,
+      );
+      return;
+    }
+
+    final periodLabel =
+        _selectedMonth == 'ALL TIME' ? 'All Time' : _selectedMonth;
+    final confirmed = await AppConfirmDialog.show(
+      context: context,
+      title: 'EXPORT GST CSV',
+      message: 'Download the GSTR-1 invoice-wise breakdown for $periodLabel'
+          '${_query.trim().isEmpty ? '' : ' (matching "${_query.trim()}")'}'
+          ' as a CSV file? The latest figures will be fetched from the server.',
+      confirmLabel: 'EXPORT',
+      cancelLabel: 'CANCEL',
+      confirmButtonColor: _navyBlue,
+    );
+    if (confirmed != true || !mounted) return;
+
+    setState(() => _exporting = true);
+    try {
+      // Pull a fresh copy so the file matches what the backend holds right now.
+      final month = _selectedMonth == 'ALL TIME' ? null : _selectedMonth;
+      final response = await _service.fetchReport(month: month);
+      if (!mounted) return;
+
+      if (!response.success || response.data == null) {
+        ToastService.show(
+          title: 'Export failed',
+          message: response.message,
+          type: ToastType.error,
+        );
+        return;
+      }
+
+      final report = response.data!;
+      setState(() => _report = report);
+
+      final orders = _applySearch(report.orders);
+      if (orders.isEmpty) {
+        ToastService.show(
+          title: 'Nothing to export',
+          message: 'The server returned no invoices for this filter.',
+          type: ToastType.info,
+        );
+        return;
+      }
+
+      final filename = 'GSTR1_${_selectedMonth == 'ALL TIME' ? 'ALL' : _selectedMonth}'
+          '_${DateFormat('yyyyMMdd_HHmm').format(DateTime.now())}.csv';
+      final saved = await saveCsvFile(filename, _buildCsv(orders));
+      if (!mounted) return;
+
+      ToastService.show(
+        title: saved ? 'CSV exported' : 'Export cancelled',
+        message: saved
+            ? '${orders.length} invoice(s) saved to $filename.'
+            : 'The file was not saved.',
+        type: saved ? ToastType.success : ToastType.info,
+      );
+    } catch (error) {
+      if (!mounted) return;
+      ToastService.show(
+        title: 'Export failed',
+        message: 'Could not create the CSV file: $error',
+        type: ToastType.error,
+      );
+    } finally {
+      if (mounted) setState(() => _exporting = false);
+    }
+  }
+
+  String _buildCsv(List<GstOrder> orders) {
+    final dateFmt = DateFormat('yyyy-MM-dd');
+    String money(double v) => v.toStringAsFixed(2);
+
+    double taxable = 0, cgst = 0, sgst = 0, gst = 0, total = 0;
+    final rows = <List<Object?>>[
+      [
+        'Invoice No',
+        'Date',
+        'Customer',
+        'Customer ID',
+        'Product',
+        'Status',
+        'Taxable Value',
+        'GST Rate (%)',
+        'CGST',
+        'SGST',
+        'Total GST',
+        'Invoice Total',
+      ],
+    ];
+    for (final o in orders) {
+      taxable += o.taxable;
+      cgst += o.cgst;
+      sgst += o.sgst;
+      gst += o.gst;
+      total += o.total;
+      rows.add([
+        o.invoiceNo,
+        o.createdAt != null ? dateFmt.format(o.createdAt!) : '',
+        o.customerName,
+        o.customerCode ?? '',
+        o.productName,
+        o.status.toUpperCase(),
+        money(o.taxable),
+        o.rate % 1 == 0 ? o.rate.toInt() : o.rate,
+        money(o.cgst),
+        money(o.sgst),
+        money(o.gst),
+        money(o.total),
+      ]);
+    }
+    rows.add([
+      'TOTAL', '', '', '', '', '',
+      money(taxable), '', money(cgst), money(sgst), money(gst), money(total),
+    ]);
+
+    // BOM so Excel opens the file as UTF-8.
+    return Csv(addBom: true).encode(rows);
+  }
 
   @override
   Widget build(BuildContext context) {
     return Container(
       color: _bgLight,
-      child: SingleChildScrollView(
-        padding: const EdgeInsets.all(16.0),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            // 1. Top Search Bar
-            Container(
-              decoration: BoxDecoration(
-                color: Colors.white,
-                borderRadius: BorderRadius.circular(12),
-                border: Border.all(color: const Color(0xFFE2E8F0)),
-              ),
-              child: const TextField(
-                decoration: InputDecoration(
-                  hintText: 'Search users, orders, assets...',
-                  hintStyle: TextStyle(fontSize: 13, color: AppColors.kTextMuted),
-                  prefixIcon: Icon(Icons.search, color: AppColors.kTextMuted, size: 20),
-                  border: InputBorder.none,
-                  contentPadding: EdgeInsets.symmetric(vertical: 14),
-                ),
-              ),
-            ),
-            const SizedBox(height: 16),
-
-            // 2. Process Button
-            ElevatedButton.icon(
-              onPressed: () {},
-              icon: const Icon(Icons.bolt, color: Color(0xFFFFD700), size: 18),
-              label: const Text(
-                'PROCESS MONTHLY YIELD',
-                style: TextStyle(
+      child: RefreshIndicator(
+        color: _navyBlue,
+        onRefresh: () => _loadReport(silent: true),
+        child: SingleChildScrollView(
+          physics: const AlwaysScrollableScrollPhysics(),
+          padding: const EdgeInsets.all(16.0),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              // 1. Top Search Bar
+              Container(
+                decoration: BoxDecoration(
                   color: Colors.white,
-                  fontWeight: FontWeight.w900,
-                  fontStyle: FontStyle.italic,
-                  letterSpacing: 1.5,
-                  fontSize: 12,
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(color: const Color(0xFFE2E8F0)),
+                ),
+                child: TextField(
+                  onChanged: (value) => setState(() => _query = value),
+                  decoration: const InputDecoration(
+                    hintText: 'Search users, orders, assets...',
+                    hintStyle: TextStyle(fontSize: 13, color: AppColors.kTextMuted),
+                    prefixIcon: Icon(Icons.search, color: AppColors.kTextMuted, size: 20),
+                    border: InputBorder.none,
+                    contentPadding: EdgeInsets.symmetric(vertical: 14),
+                  ),
                 ),
               ),
-              style: ElevatedButton.styleFrom(
-                backgroundColor: _navyBlue,
-                padding: const EdgeInsets.symmetric(vertical: 16),
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(10),
+              const SizedBox(height: 16),
+
+              // 2. Process Button
+              ElevatedButton.icon(
+                onPressed: _loading ? null : () => _loadReport(),
+                icon: const Icon(Icons.bolt, color: Color(0xFFFFD700), size: 18),
+                label: const Text(
+                  'PROCESS MONTHLY YIELD',
+                  style: TextStyle(
+                    color: Colors.white,
+                    fontWeight: FontWeight.w900,
+                    fontStyle: FontStyle.italic,
+                    letterSpacing: 1.5,
+                    fontSize: 12,
+                  ),
                 ),
-                elevation: 0,
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: _navyBlue,
+                  padding: const EdgeInsets.symmetric(vertical: 16),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                  elevation: 0,
+                ),
               ),
-            ),
-            const SizedBox(height: 24),
-
-            // 3. Header Controls
-            _buildHeaderControlsCard(),
-            const SizedBox(height: 24),
-
-            // 4. Custom Tabs (GSTR-1 vs GSTR-3B)
-            _buildTabs(),
-            const SizedBox(height: 24),
-
-            // 5. Dynamic Content based on Tab Selection
-            if (_isGstr1Active) ...[
-              _buildGstr1StatCards(),
               const SizedBox(height: 24),
-              _buildGstr1RateSummaryTable(),
+
+              // 3. Header Controls
+              _buildHeaderControlsCard(),
               const SizedBox(height: 24),
-              _buildGstr1InvoiceBreakdownTable(),
-            ] else ...[
-              _buildGstr3bTable(),
+
+              // 4. Custom Tabs (GSTR-1 vs GSTR-3B)
+              _buildTabs(),
+              const SizedBox(height: 24),
+
+              // 5. Dynamic Content
+              _buildBody(),
+
+              const SizedBox(height: 32),
             ],
-            
-            const SizedBox(height: 32),
-          ],
+          ),
         ),
       ),
     );
+  }
+
+  Widget _buildBody() {
+    if (_loading) {
+      return const Padding(
+        padding: EdgeInsets.symmetric(vertical: 60),
+        child: Center(child: AppLoader()),
+      );
+    }
+
+    if (_error != null) {
+      return Padding(
+        padding: const EdgeInsets.symmetric(vertical: 40),
+        child: Column(
+          children: [
+            const Icon(Icons.error_outline_rounded, color: AppColors.kDanger, size: 32),
+            const SizedBox(height: 12),
+            Text(
+              _error!,
+              textAlign: TextAlign.center,
+              style: const TextStyle(color: AppColors.kTextMuted, fontSize: 13),
+            ),
+            const SizedBox(height: 16),
+            OutlinedButton(onPressed: () => _loadReport(), child: const Text('Retry')),
+          ],
+        ),
+      );
+    }
+
+    if (_isGstr1Active) {
+      return Column(
+        children: [
+          _buildGstr1StatCards(),
+          const SizedBox(height: 24),
+          _buildGstr1RateSummaryTable(),
+          const SizedBox(height: 24),
+          _buildGstr1InvoiceBreakdownTable(),
+        ],
+      );
+    }
+    return _buildGstr3bTable();
   }
 
   // ===========================================================================
@@ -101,6 +340,10 @@ class _GstrFilingScreenState extends State<GstrFilingScreen> {
   // ===========================================================================
 
   Widget _buildHeaderControlsCard() {
+    final monthOptions = <String>['ALL TIME', ..._report.months];
+    final dropdownValue =
+        monthOptions.contains(_selectedMonth) ? _selectedMonth : 'ALL TIME';
+
     return Container(
       padding: const EdgeInsets.all(20),
       decoration: BoxDecoration(
@@ -125,8 +368,8 @@ class _GstrFilingScreenState extends State<GstrFilingScreen> {
               Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
-                  children: const [
-                    Text(
+                  children: [
+                    const Text(
                       'GSTR FILING (GSTR-1 & GSTR-3B)',
                       style: TextStyle(
                         fontSize: 16,
@@ -137,8 +380,8 @@ class _GstrFilingScreenState extends State<GstrFilingScreen> {
                       ),
                     ),
                     Text(
-                      'REAL-TIME TAX MATRIX & RETURN DATA (CGST / SGST) • PERIOD: ALL TIME',
-                      style: TextStyle(
+                      'REAL-TIME TAX MATRIX & RETURN DATA (CGST / SGST) • PERIOD: ${_report.period.toUpperCase()}',
+                      style: const TextStyle(
                         fontSize: 8,
                         fontWeight: FontWeight.bold,
                         fontStyle: FontStyle.italic,
@@ -165,7 +408,7 @@ class _GstrFilingScreenState extends State<GstrFilingScreen> {
                   child: DropdownButtonHideUnderline(
                     child: DropdownButton<String>(
                       isExpanded: true,
-                      value: 'ALL TIME',
+                      value: dropdownValue,
                       icon: const Icon(Icons.unfold_more, size: 16),
                       style: const TextStyle(
                         fontSize: 10,
@@ -173,28 +416,43 @@ class _GstrFilingScreenState extends State<GstrFilingScreen> {
                         fontStyle: FontStyle.italic,
                         color: Colors.black,
                       ),
-                      items: ['ALL TIME', 'THIS MONTH'].map((String value) {
+                      items: monthOptions.map((String value) {
                         return DropdownMenuItem<String>(value: value, child: Text(value));
                       }).toList(),
-                      onChanged: (_) {},
+                      onChanged: (value) {
+                        if (value == null) return;
+                        setState(() => _selectedMonth = value);
+                        _loadReport();
+                      },
                     ),
                   ),
                 ),
               ),
               const SizedBox(width: 8),
-              Container(
-                height: 40,
-                width: 40,
-                decoration: BoxDecoration(
-                  border: Border.all(color: const Color(0xFFE2E8F0)),
-                  shape: BoxShape.circle,
+              InkWell(
+                onTap: _loading ? null : () => _loadReport(),
+                child: Container(
+                  height: 40,
+                  width: 40,
+                  decoration: BoxDecoration(
+                    border: Border.all(color: const Color(0xFFE2E8F0)),
+                    shape: BoxShape.circle,
+                  ),
+                  child: const Icon(Icons.refresh, size: 18, color: AppColors.kTextMuted),
                 ),
-                child: const Icon(Icons.refresh, size: 18, color: AppColors.kTextMuted),
               ),
               const SizedBox(width: 8),
               ElevatedButton.icon(
-                onPressed: () {},
-                icon: const Icon(Icons.insert_drive_file_outlined, color: Colors.white, size: 14),
+                onPressed: (_loading || _exporting) ? null : _exportCsv,
+                icon: _exporting
+                    ? const SizedBox(
+                        width: 14,
+                        height: 14,
+                        child: CircularProgressIndicator(
+                            strokeWidth: 2, color: Colors.white),
+                      )
+                    : const Icon(Icons.insert_drive_file_outlined,
+                        color: Colors.white, size: 14),
                 label: const Text(
                   'EXPORT CSV',
                   style: TextStyle(
@@ -206,6 +464,7 @@ class _GstrFilingScreenState extends State<GstrFilingScreen> {
                 ),
                 style: ElevatedButton.styleFrom(
                   backgroundColor: _navyBlue,
+                  disabledBackgroundColor: _navyBlue.withOpacity(0.6),
                   padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
                   shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
                   elevation: 0,
@@ -283,57 +542,49 @@ class _GstrFilingScreenState extends State<GstrFilingScreen> {
   // GSTR-1 VIEWS
   // ===========================================================================
 
-Widget _buildGstr1StatCards() {
-    // Responsive breakpoints for narrow screens
-    final screenWidth = MediaQuery.of(context).size.width;
-    final isSmallMobile = screenWidth < 380;
+  Widget _buildGstr1StatCards() {
+    final summary = _report.summary;
 
     return Column(
       children: [
-        GridView.count(
-          shrinkWrap: true,
-          physics: const NeverScrollableScrollPhysics(),
-          crossAxisCount: 2,
-          mainAxisSpacing: isSmallMobile ? 8.0 : 12.0,
-          crossAxisSpacing: isSmallMobile ? 8.0 : 12.0,
-          childAspectRatio: isSmallMobile ? 0.82 : 1.15,
-          children: const [
+        StatCardGrid(
+          children: [
             StatCard(
               label: 'TAXABLE VALUE',
-              value: '₹1,88,06,774.50',
+              value: summary.taxableDisplay,
               icon: Icons.account_balance_wallet_outlined,
               color: AppColors.kPrimary,
-              badgeText: '42 ORDERS',
-              backgroundColor: Color(0xFFF8FAFC),
-              borderColor: Color(0xFFE2E8F0),
-              badgeBackgroundColor: Color(0xFFEDF2F7),
+              badgeText: summary.ordersDisplay,
+              backgroundColor: const Color(0xFFF8FAFC),
+              borderColor: const Color(0xFFE2E8F0),
+              badgeBackgroundColor: const Color(0xFFEDF2F7),
               badgeTextColor: AppColors.kPrimary,
             ),
             StatCard(
               label: 'CGST COLLECTED',
-              value: '₹3,05,851.64',
+              value: summary.cgstDisplay,
               icon: Icons.pie_chart_outline,
-              color: Color(0xFF3B82F6),
+              color: const Color(0xFF3B82F6),
               badgeText: 'CENTRAL GST',
-              backgroundColor: Color(0xFFF0F7FF),
-              borderColor: Color(0xFFBFDBFE),
-              badgeBackgroundColor: Color(0xFFDBEAFE),
-              badgeTextColor: Color(0xFF1D4ED8),
+              backgroundColor: const Color(0xFFF0F7FF),
+              borderColor: const Color(0xFFBFDBFE),
+              badgeBackgroundColor: const Color(0xFFDBEAFE),
+              badgeTextColor: const Color(0xFF1D4ED8),
             ),
             StatCard(
               label: 'SGST COLLECTED',
-              value: '₹3,05,851.61',
+              value: summary.sgstDisplay,
               icon: Icons.pie_chart_outline,
-              color: Color(0xFF10B981),
+              color: const Color(0xFF10B981),
               badgeText: 'STATE GST',
-              backgroundColor: Color(0xFFECFDF5),
-              borderColor: Color(0xFFA7F3D0),
-              badgeBackgroundColor: Color(0xFFD1FAE5),
-              badgeTextColor: Color(0xFF047857),
+              backgroundColor: const Color(0xFFECFDF5),
+              borderColor: const Color(0xFFA7F3D0),
+              badgeBackgroundColor: const Color(0xFFD1FAE5),
+              badgeTextColor: const Color(0xFF047857),
             ),
             StatCard(
               label: 'TOTAL GST',
-              value: '₹6,11,703.25',
+              value: summary.totalGstDisplay,
               icon: Icons.payments_outlined,
               color: AppColors.goldColor,
               badgeText: 'CGST + SGST',
@@ -345,15 +596,15 @@ Widget _buildGstr1StatCards() {
           ],
         ),
         const SizedBox(height: 12),
-        const StatCard(
+        StatCard(
           label: 'INVOICE TOTAL',
-          value: '₹1,94,18,477.75',
+          value: _report.invoiceTotalDisplay,
           icon: Icons.receipt_long,
           color: AppColors.kPrimary,
           badgeText: 'INCL. GST',
-          backgroundColor: Color(0xFFF8FAFC),
-          borderColor: Color(0xFFE2E8F0),
-          badgeBackgroundColor: Color(0xFFEDF2F7),
+          backgroundColor: const Color(0xFFF8FAFC),
+          borderColor: const Color(0xFFE2E8F0),
+          badgeBackgroundColor: const Color(0xFFEDF2F7),
           badgeTextColor: AppColors.kPrimary,
         ),
       ],
@@ -361,71 +612,52 @@ Widget _buildGstr1StatCards() {
   }
 
   Widget _buildGstr1RateSummaryTable() {
+    final slabs = _report.rateSlabs;
+
     return _buildResponsiveTableCard(
       title: 'GSTR-1 RATE-WISE OUTWARD SUPPLIES SUMMARY',
-      tableWidth: 800, // Enforces horizontal scroll on small devices
+      tableWidth: 800,
       headers: ['GST RATE', 'TAXABLE VALUE', 'CGST', 'SGST', 'TOTAL GST LIABILITY', 'ORDERS'],
       columnWidths: const [150, 130, 110, 110, 150, 80],
+      emptyLabel: 'No rate slabs for this period.',
       rows: [
-        _buildDataRow([
-          _styledText('3% (CGST 1.5% + SGST 1.5%)', _navyBlue),
-          _styledText('₹1,85,76,774.50', _navyBlue),
-          _styledText('₹2,78,651.64', _gold),
-          _styledText('₹2,78,651.61', _gold),
-          _styledText('₹5,57,303.25', _navyBlue),
-          _styledText('40', _navyBlue),
-        ]),
-        _buildDataRow([
-          _styledText('18% (CGST 9% + SGST 9%)', _navyBlue),
-          _styledText('₹1,00,000.00', _navyBlue),
-          _styledText('₹9,000.00', _gold),
-          _styledText('₹9,000.00', _gold),
-          _styledText('₹18,000.00', _navyBlue),
-          _styledText('1', _navyBlue),
-        ]),
-        _buildDataRow([
-          _styledText('28% (CGST 14% + SGST 14%)', _navyBlue),
-          _styledText('₹1,30,000.00', _navyBlue),
-          _styledText('₹18,200.00', _gold),
-          _styledText('₹18,200.00', _gold),
-          _styledText('₹36,400.00', _navyBlue),
-          _styledText('1', _navyBlue),
-        ], isLast: true),
+        for (var i = 0; i < slabs.length; i++)
+          _buildDataRow([
+            _styledText(slabs[i].rateLabel, _navyBlue),
+            _styledText(slabs[i].taxableDisplay, _navyBlue),
+            _styledText(slabs[i].cgstDisplay, _gold),
+            _styledText(slabs[i].sgstDisplay, _gold),
+            _styledText(slabs[i].totalGstDisplay, _navyBlue),
+            _styledText(slabs[i].ordersDisplay, _navyBlue),
+          ], isLast: i == slabs.length - 1),
       ],
     );
   }
 
   Widget _buildGstr1InvoiceBreakdownTable() {
+    final orders = _filteredOrders;
+
     return _buildResponsiveTableCard(
       title: 'GSTR-1 B2C INVOICE-WISE BREAKDOWN',
-      tableWidth: 1000, 
+      tableWidth: 1000,
       headers: ['INVOICE', 'DATE', 'CUSTOMER', 'PRODUCT', 'TAXABLE', 'GST%', 'CGST', 'SGST', 'TOTAL'],
       columnWidths: const [80, 90, 140, 150, 100, 60, 90, 90, 110],
+      emptyLabel: _report.orders.isEmpty
+          ? 'No invoices for this period.'
+          : 'No invoices match your search.',
       rows: [
-        _buildDataRow([
-          _styledText('INV-61', _gold), _styledText('26 Aug 26', AppColors.kTextMuted),
-          _styledText('Nandha Kumar.M', _navyBlue), _styledText('40 Gram(s) 24K Gold', _navyBlue),
-          _styledText('₹8,15,540.00', _navyBlue), _styledText('3%', _navyBlue),
-          _styledText('₹12,233.10', _gold), _styledText('₹12,233.10', _gold), _styledText('₹8,40,006.20', _navyBlue),
-        ]),
-        _buildDataRow([
-          _styledText('INV-60', _gold), _styledText('26 Aug 26', AppColors.kTextMuted),
-          _styledText('Prakash.A', _navyBlue), _styledText('8 Gram(s) 24K Gold', _navyBlue),
-          _styledText('₹1,63,108.00', _navyBlue), _styledText('3%', _navyBlue),
-          _styledText('₹2,446.62', _gold), _styledText('₹2,446.62', _gold), _styledText('₹1,68,001.24', _navyBlue),
-        ]),
-        _buildDataRow([
-          _styledText('INV-59', _gold), _styledText('25 Aug 26', AppColors.kTextMuted),
-          _styledText('Somasundaram.S', _navyBlue), _styledText('8 Gram(s) 24K Gold', _navyBlue),
-          _styledText('₹1,63,108.00', _navyBlue), _styledText('3%', _navyBlue),
-          _styledText('₹2,446.62', _gold), _styledText('₹2,446.62', _gold), _styledText('₹1,68,001.24', _navyBlue),
-        ]),
-        _buildDataRow([
-          _styledText('INV-58', _gold), _styledText('25 Aug 26', AppColors.kTextMuted),
-          _styledText('Kanagaraj K', _navyBlue), _styledText('32 Gram(s) 24K Gold', _navyBlue),
-          _styledText('₹6,52,432.00', _navyBlue), _styledText('3%', _navyBlue),
-          _styledText('₹9,786.48', _gold), _styledText('₹9,786.48', _gold), _styledText('₹6,72,004.96', _navyBlue),
-        ], isLast: true),
+        for (var i = 0; i < orders.length; i++)
+          _buildDataRow([
+            _styledText(orders[i].invoiceNo, _gold),
+            _styledText(orders[i].dateDisplay, AppColors.kTextMuted),
+            _styledText(orders[i].customerName, _navyBlue),
+            _styledText(orders[i].productName, _navyBlue),
+            _styledText(orders[i].taxableDisplay, _navyBlue),
+            _styledText(orders[i].rateDisplay, _navyBlue),
+            _styledText(orders[i].cgstDisplay, _gold),
+            _styledText(orders[i].sgstDisplay, _gold),
+            _styledText(orders[i].totalDisplay, _navyBlue),
+          ], isLast: i == orders.length - 1),
       ],
     );
   }
@@ -435,6 +667,8 @@ Widget _buildGstr1StatCards() {
   // ===========================================================================
 
   Widget _buildGstr3bTable() {
+    final summary = _report.summary;
+
     return _buildResponsiveTableCard(
       title: 'GSTR-3B BOX 3.1: OUTWARD SUPPLIES & NET TAX LIABILITIES',
       subtitle: 'SUMMARY RETURN TABLE FOR DIRECT FILING ON THE GST PORTAL',
@@ -448,14 +682,18 @@ Widget _buildGstr1StatCards() {
         'TOTAL TAX PAYABLE'
       ],
       columnWidths: const [250, 140, 120, 120, 120, 130],
+      emptyLabel: 'No data for this period.',
       rows: [
         _buildDataRow([
-          _styledText('3.1(a) Outward Taxable Supplies (Other than Zero Rated, Nil Rated and Exempted)', _navyBlue),
-          _styledText('₹1,88,06,774.50', _navyBlue),
+          _styledText(
+            '3.1(a) Outward Taxable Supplies (Other than Zero Rated, Nil Rated and Exempted)',
+            _navyBlue,
+          ),
+          _styledText(summary.taxableDisplay, _navyBlue),
           _styledText('₹0.00', AppColors.kTextMuted),
-          _styledText('₹3,05,851.64', _gold),
-          _styledText('₹3,05,851.61', _gold),
-          _styledText('₹6,11,703.25', _navyBlue),
+          _styledText(summary.cgstDisplay, _gold),
+          _styledText(summary.sgstDisplay, _gold),
+          _styledText(summary.totalGstDisplay, _navyBlue),
         ]),
         _buildDataRow([
           _styledText('3.1(b) Outward Taxable Supplies (Zero Rated)', AppColors.kTextMuted),
@@ -467,18 +705,18 @@ Widget _buildGstr1StatCards() {
         ]),
         _buildDataRow([
           _styledText('TOTAL NET TAX LIABILITY (BOX 3.1)', _navyBlue),
-          _styledText('₹1,88,06,774.50', _navyBlue),
+          _styledText(summary.taxableDisplay, _navyBlue),
           _styledText('₹0.00', AppColors.kTextMuted),
-          _styledText('₹3,05,851.64', _gold),
-          _styledText('₹3,05,851.61', _gold),
-          _styledText('₹6,11,703.25', _navyBlue),
+          _styledText(summary.cgstDisplay, _gold),
+          _styledText(summary.sgstDisplay, _gold),
+          _styledText(summary.totalGstDisplay, _navyBlue),
         ], isLast: true),
       ],
     );
   }
 
   // ===========================================================================
-  // REUSABLE TABLE BUILDERS (Ensures Mobile Responsiveness)
+  // REUSABLE TABLE BUILDERS
   // ===========================================================================
 
   Widget _buildResponsiveTableCard({
@@ -488,6 +726,7 @@ Widget _buildGstr1StatCards() {
     required List<String> headers,
     required List<double> columnWidths,
     required List<Widget> rows,
+    String emptyLabel = 'No data available.',
   }) {
     return Container(
       decoration: BoxDecoration(
@@ -529,45 +768,51 @@ Widget _buildGstr1StatCards() {
               ],
             ),
           ),
-          // Scrollable Table Container
-          SingleChildScrollView(
-            scrollDirection: Axis.horizontal,
-            child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
-              child: SizedBox(
-                width: tableWidth,
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    // Header Row
-                    Row(
-                      children: List.generate(
-                        headers.length,
-                        (i) => SizedBox(
-                          width: columnWidths[i],
-                          child: Text(
-                            headers[i],
-                            style: const TextStyle(
-                              fontSize: 9,
-                              fontWeight: FontWeight.w900,
-                              fontStyle: FontStyle.italic,
-                              color: AppColors.kTextMuted,
-                              letterSpacing: 0.5,
+          if (rows.isEmpty)
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 24),
+              child: Text(
+                emptyLabel,
+                style: const TextStyle(color: AppColors.kTextMuted, fontSize: 12),
+              ),
+            )
+          else
+            SingleChildScrollView(
+              scrollDirection: Axis.horizontal,
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+                child: SizedBox(
+                  width: tableWidth,
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        children: List.generate(
+                          headers.length,
+                          (i) => SizedBox(
+                            width: columnWidths[i],
+                            child: Text(
+                              headers[i],
+                              style: const TextStyle(
+                                fontSize: 9,
+                                fontWeight: FontWeight.w900,
+                                fontStyle: FontStyle.italic,
+                                color: AppColors.kTextMuted,
+                                letterSpacing: 0.5,
+                              ),
                             ),
                           ),
                         ),
                       ),
-                    ),
-                    const SizedBox(height: 12),
-                    const Divider(color: Color(0xFFF1F5F9), height: 1, thickness: 1),
-                    const SizedBox(height: 12),
-                    // Data Rows
-                    ...rows,
-                  ],
+                      const SizedBox(height: 12),
+                      const Divider(color: Color(0xFFF1F5F9), height: 1, thickness: 1),
+                      const SizedBox(height: 12),
+                      ...rows,
+                    ],
+                  ),
                 ),
               ),
             ),
-          ),
         ],
       ),
     );

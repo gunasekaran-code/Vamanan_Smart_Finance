@@ -4,6 +4,10 @@ import 'package:go_router/go_router.dart';
 import 'package:frontend/core/theme/app_theme.dart';
 import 'package:frontend/shared/widgets/app_page.dart';
 import 'package:frontend/shared/widgets/app_toast.dart';
+import 'package:frontend/core/services/session_service.dart';
+import '../../models/auditor_dashboard_model.dart';
+import '../../services/auditor_dashboard_service.dart';
+import 'package:frontend/shared/widgets/app_loader.dart';
 
 class AuditorDashboardScreen extends StatefulWidget {
   const AuditorDashboardScreen({super.key});
@@ -17,12 +21,55 @@ class _AuditorDashboardScreenState extends State<AuditorDashboardScreen> {
   final Color _navyBlue = AppColors.kPrimaryDark;
   final Color _slateText = AppColors.kTextMuted;
   final Color _lightBorder = const Color(0xFFF1F5F9);
-  final Color _lightBg = const Color(0xFFF8FAFC);
 
   // Feedback State
   int _feedbackTab = 0; // 0: Write, 1: Team, 2: Submissions
   final _feedbackSubjectCtrl = TextEditingController();
   final _feedbackMsgCtrl = TextEditingController();
+  AuditorDashboardSummary? _summary;
+  Object? _summaryError;
+  bool _summaryLoading = true;
+
+  String get _displayName =>
+      SessionService.instance.currentUser?.name ?? 'AUDITOR';
+  String get _referralCode =>
+      SessionService.instance.currentUser?.referralCode ?? 'NOT SET';
+
+  String _money(double value) => '₹${value.toStringAsFixed(2)}';
+
+  @override
+  void initState() {
+    super.initState();
+    _loadSummary();
+  }
+
+  Future<void> _loadSummary() async {
+    try {
+      final summary = await AuditorDashboardService.instance.fetchSummary();
+      if (mounted) {
+        setState(() {
+          _summary = summary;
+          _summaryError = null;
+          _summaryLoading = false;
+        });
+      }
+    } catch (error) {
+      if (mounted) {
+        setState(() {
+          _summaryError = error;
+          _summaryLoading = false;
+        });
+      }
+    }
+  }
+
+  void _reloadSummary() {
+    setState(() {
+      _summaryLoading = true;
+      _summaryError = null;
+      _loadSummary();
+    });
+  }
 
   @override
   void dispose() {
@@ -51,10 +98,16 @@ class _AuditorDashboardScreenState extends State<AuditorDashboardScreen> {
 
   void _submitFeedback() {
     if (_feedbackSubjectCtrl.text.isEmpty || _feedbackMsgCtrl.text.isEmpty) {
-      ToastService.show(title: 'Error', message: 'Please fill out all fields.', type: ToastType.error);
+      ToastService.show(
+          title: 'Error',
+          message: 'Please fill out all fields.',
+          type: ToastType.error);
       return;
     }
-    ToastService.show(title: 'Success', message: 'Feedback submitted to the admin team.', type: ToastType.success);
+    ToastService.show(
+        title: 'Success',
+        message: 'Feedback submitted to the admin team.',
+        type: ToastType.success);
     _feedbackSubjectCtrl.clear();
     _feedbackMsgCtrl.clear();
     setState(() => _feedbackTab = 2);
@@ -65,51 +118,76 @@ class _AuditorDashboardScreenState extends State<AuditorDashboardScreen> {
     return AppPage(
       title: null, // Custom Header
       children: [
-        Center(
-          child: Container(
-            constraints: const BoxConstraints(maxWidth: 800), // Desktop/Tablet constraint
+        if (_summaryLoading)
+          const Padding(
+            padding: EdgeInsets.symmetric(vertical: 120),
+            child: Center(child: AppLoader()),
+          ),
+        if (!_summaryLoading && _summaryError != null)
+          Padding(
+            padding: const EdgeInsets.symmetric(vertical: 80, horizontal: 24),
             child: Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                // 1. HEADER & INVEST NOW BUTTON
-                _buildHeader(),
-                const SizedBox(height: 24),
-
-                // 2. MAIN NAVY CARD (TOTAL PURCHASE)
-                _buildTotalPurchaseCard(),
+                const Icon(Icons.cloud_off_outlined,
+                    color: AppColors.kTextMuted, size: 32),
+                const SizedBox(height: 12),
+                Text('Could not load auditor dashboard.\n$_summaryError',
+                    textAlign: TextAlign.center,
+                    style: const TextStyle(
+                        color: AppColors.kTextMuted, fontSize: 12)),
                 const SizedBox(height: 16),
-
-                // 3. VERTICAL STAT CARDS LIST
-                _buildVerticalStatsList(),
-                const SizedBox(height: 24),
-
-                // 4. INVESTMENT PROGRESS
-                _buildInvestmentProgressCard(),
-                const SizedBox(height: 24),
-
-                // 5. NETWORK EXPANSION
-                _buildNetworkExpansionCard(),
-                const SizedBox(height: 24),
-
-                // 6. GROWTH INSIGHTS
-                _buildGrowthInsightsCard(),
-                const SizedBox(height: 24),
-
-                // 7. IMPORTANT NOTICE (GOLD CARD)
-                _buildImportantNoticeCard(),
-                const SizedBox(height: 24),
-
-                // 8. WALLET OPERATIONS (EMPTY STATE)
-                _buildWalletOperationsCard(),
-                const SizedBox(height: 24),
-
-                // 9. FEEDBACK & REMARKS
-                _buildFeedbackSection(),
-                const SizedBox(height: 40),
+                TextButton(
+                    onPressed: _reloadSummary, child: const Text('RETRY')),
               ],
             ),
           ),
-        ),
+        if (!_summaryLoading && _summaryError == null && _summary != null)
+          Center(
+            child: Container(
+              constraints: const BoxConstraints(
+                  maxWidth: 800), // Desktop/Tablet constraint
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  // 1. HEADER & INVEST NOW BUTTON
+                  _buildHeader(),
+                  const SizedBox(height: 24),
+
+                  // 2. MAIN NAVY CARD (TOTAL PURCHASE)
+                  _buildTotalPurchaseCard(_summary!),
+                  const SizedBox(height: 16),
+
+                  // 3. VERTICAL STAT CARDS LIST
+                  _buildVerticalStatsList(_summary!),
+                  const SizedBox(height: 24),
+
+                  // 4. INVESTMENT PROGRESS
+                  _buildInvestmentProgressCard(_summary!),
+                  const SizedBox(height: 24),
+
+                  // 5. NETWORK EXPANSION
+                  _buildNetworkExpansionCard(_summary!),
+                  const SizedBox(height: 24),
+
+                  // 6. GROWTH INSIGHTS
+                  _buildGrowthInsightsCard(),
+                  const SizedBox(height: 24),
+
+                  // 7. IMPORTANT NOTICE (GOLD CARD)
+                  _buildImportantNoticeCard(_summary!),
+                  const SizedBox(height: 24),
+
+                  // 8. WALLET OPERATIONS (EMPTY STATE)
+                  _buildWalletOperationsCard(),
+                  const SizedBox(height: 24),
+
+                  // 9. FEEDBACK & REMARKS
+                  _buildFeedbackSection(),
+                  const SizedBox(height: 40),
+                ],
+              ),
+            ),
+          ),
       ],
     );
   }
@@ -129,15 +207,33 @@ class _AuditorDashboardScreenState extends State<AuditorDashboardScreen> {
             children: [
               Row(
                 children: const [
-                  Icon(Icons.circle, color: AppColors.goldColor, size: 8),
+                  Icon(Icons.star, color: AppColors.goldColor, size: 8),
                   SizedBox(width: 8),
-                  Text('AUDITOR SESSION', style: TextStyle(color: Color(0xFF94A3B8), fontSize: 10, fontWeight: FontWeight.w900, fontStyle: FontStyle.italic, letterSpacing: 2.0)),
+                  Text('AUDITOR SESSION',
+                      style: TextStyle(
+                          color: Color(0xFF94A3B8),
+                          fontSize: 10,
+                          fontWeight: FontWeight.w900,
+                          fontStyle: FontStyle.italic,
+                          letterSpacing: 2.0)),
                 ],
               ),
               const SizedBox(height: 8),
-              Text('DASHBOARD', style: TextStyle(color: _navyBlue, fontSize: 28, fontWeight: FontWeight.w900, fontStyle: FontStyle.italic, letterSpacing: -1.0)),
+              Text('DASHBOARD',
+                  style: TextStyle(
+                      color: _navyBlue,
+                      fontSize: 28,
+                      fontWeight: FontWeight.w900,
+                      fontStyle: FontStyle.italic,
+                      letterSpacing: -1.0)),
               const SizedBox(height: 4),
-              Text('WELCOME BACK, TEST AUDITOR • UNVERIFIED LEDGER', style: TextStyle(color: _slateText, fontSize: 9, fontWeight: FontWeight.w900, fontStyle: FontStyle.italic, letterSpacing: 1.0)),
+              Text('WELCOME BACK, $_displayName • READ-ONLY LEDGER',
+                  style: TextStyle(
+                      color: _slateText,
+                      fontSize: 9,
+                      fontWeight: FontWeight.w900,
+                      fontStyle: FontStyle.italic,
+                      letterSpacing: 1.0)),
             ],
           ),
         ),
@@ -148,14 +244,20 @@ class _AuditorDashboardScreenState extends State<AuditorDashboardScreen> {
             backgroundColor: _navyBlue,
             foregroundColor: Colors.white,
             padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 18),
-            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+            shape:
+                RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
             elevation: 10,
             shadowColor: _navyBlue.withOpacity(0.3),
           ),
           child: Row(
             mainAxisSize: MainAxisSize.min,
             children: const [
-              Text('INVEST NOW', style: TextStyle(fontWeight: FontWeight.w900, fontStyle: FontStyle.italic, fontSize: 12, letterSpacing: 1.0)),
+              Text('INVEST NOW',
+                  style: TextStyle(
+                      fontWeight: FontWeight.w900,
+                      fontStyle: FontStyle.italic,
+                      fontSize: 12,
+                      letterSpacing: 1.0)),
               SizedBox(width: 8),
               Icon(Icons.arrow_forward, size: 16),
             ],
@@ -165,34 +267,62 @@ class _AuditorDashboardScreenState extends State<AuditorDashboardScreen> {
     );
   }
 
-  Widget _buildTotalPurchaseCard() {
+  Widget _buildTotalPurchaseCard(AuditorDashboardSummary summary) {
     return Container(
       padding: const EdgeInsets.all(32),
       decoration: BoxDecoration(
         color: _navyBlue,
         borderRadius: BorderRadius.circular(32),
-        boxShadow: [BoxShadow(color: _navyBlue.withOpacity(0.3), blurRadius: 24, offset: const Offset(0, 12))],
+        boxShadow: [
+          BoxShadow(
+              color: _navyBlue.withOpacity(0.3),
+              blurRadius: 24,
+              offset: const Offset(0, 12))
+        ],
       ),
       child: Stack(
         children: [
           Positioned(
-            right: -20, bottom: -20,
-            child: Icon(Icons.account_balance_wallet, size: 160, color: Colors.white.withOpacity(0.05)),
+            right: -20,
+            bottom: -20,
+            child: Icon(Icons.account_balance_wallet,
+                size: 160, color: Colors.white.withOpacity(0.05)),
           ),
           Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Container(
                 padding: const EdgeInsets.all(10),
-                decoration: BoxDecoration(color: Colors.white.withOpacity(0.1), borderRadius: BorderRadius.circular(12)),
-                child: const Icon(Icons.trending_up, color: AppColors.goldColor, size: 20),
+                decoration: BoxDecoration(
+                    color: Colors.white.withOpacity(0.1),
+                    borderRadius: BorderRadius.circular(12)),
+                child: const Icon(Icons.trending_up,
+                    color: AppColors.goldColor, size: 20),
               ),
               const SizedBox(height: 24),
-              const Text('TOTAL PURCHASE (NET)', style: TextStyle(color: Color(0xFF94A3B8), fontSize: 11, fontWeight: FontWeight.w900, fontStyle: FontStyle.italic, letterSpacing: 1.5)),
+              const Text('TOTAL PURCHASE (NET)',
+                  style: TextStyle(
+                      color: Color(0xFF94A3B8),
+                      fontSize: 11,
+                      fontWeight: FontWeight.w900,
+                      fontStyle: FontStyle.italic,
+                      letterSpacing: 1.5)),
               const SizedBox(height: 8),
-              const Text('₹0', style: TextStyle(color: Colors.white, fontSize: 48, fontWeight: FontWeight.w900, fontStyle: FontStyle.italic, letterSpacing: -1.0)),
+              Text(_money(summary.taxable),
+                  style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 48,
+                      fontWeight: FontWeight.w900,
+                      fontStyle: FontStyle.italic,
+                      letterSpacing: -1.0)),
               const SizedBox(height: 8),
-              const Text('CASHBACK BASIS: ₹0', style: TextStyle(color: Colors.white54, fontSize: 10, fontWeight: FontWeight.w900, fontStyle: FontStyle.italic, letterSpacing: 1.0)),
+              Text('CASHBACK BASIS: ${_money(summary.taxable)}',
+                  style: const TextStyle(
+                      color: Colors.white54,
+                      fontSize: 10,
+                      fontWeight: FontWeight.w900,
+                      fontStyle: FontStyle.italic,
+                      letterSpacing: 1.0)),
             ],
           ),
         ],
@@ -200,33 +330,63 @@ class _AuditorDashboardScreenState extends State<AuditorDashboardScreen> {
     );
   }
 
-  Widget _buildVerticalStatsList() {
+  Widget _buildVerticalStatsList(AuditorDashboardSummary summary) {
     return Column(
       children: [
-        _buildListStatCard('DAILY CASHBACK', '₹0', Icons.bolt, AppColors.goldBadgeBg, AppColors.goldColor, subtitle: '0% OF PURCHASE'),
+        _buildListStatCard('DAILY CASHBACK', _money(summary.cashbackNet),
+            Icons.bolt, AppColors.goldBadgeBg, AppColors.goldColor,
+            subtitle: 'COMPLETED CASHBACK'),
         const SizedBox(height: 12),
-        _buildListStatCard('REFERRAL COMMISSIONS', '₹0', Icons.people_outline, AppColors.goldBadgeBg, AppColors.goldColor),
+        _buildListStatCard('REFERRAL COMMISSIONS', _money(summary.referralNet),
+            Icons.people_outline, AppColors.goldBadgeBg, AppColors.goldColor),
         const SizedBox(height: 12),
-        _buildListStatCard('NET YIELD (TOTAL EARNINGS)', '₹0', Icons.monetization_on_outlined, const Color(0xFFEFF6FF), const Color(0xFF3B82F6)),
+        _buildListStatCard(
+            'NET YIELD (TOTAL EARNINGS)',
+            _money(summary.payoutsNet),
+            Icons.monetization_on_outlined,
+            const Color(0xFFEFF6FF),
+            const Color(0xFF3B82F6)),
         const SizedBox(height: 12),
-        _buildListStatCard('WITHDRAWN AMOUNT', '₹0', Icons.arrow_outward, const Color(0xFFEFF6FF), const Color(0xFF3B82F6)),
+        _buildListStatCard(
+            'WITHDRAWN AMOUNT',
+            _money(summary.withdrawnPaid),
+            Icons.arrow_outward,
+            const Color(0xFFEFF6FF),
+            const Color(0xFF3B82F6)),
         const SizedBox(height: 12),
-        _buildListStatCard('AVAILABLE BALANCE', '₹0', Icons.account_balance_wallet_outlined, const Color(0xFFF3E8FF), const Color(0xFF9333EA)),
+        _buildListStatCard(
+            'AVAILABLE BALANCE',
+            _money(summary.walletLiability),
+            Icons.account_balance_wallet_outlined,
+            const Color(0xFFF3E8FF),
+            const Color(0xFF9333EA)),
         const SizedBox(height: 12),
-        _buildListStatCard('ASSET INVENTORY', '0', Icons.inventory_2_outlined, const Color(0xFFF1F5F9), _navyBlue, subtitle: 'GRAMS'),
+        _buildListStatCard(
+            'ACTIVE ASSET CYCLES',
+            summary.activeCycles.toString(),
+            Icons.inventory_2_outlined,
+            const Color(0xFFF1F5F9),
+            _navyBlue,
+            subtitle: 'ACTIVE RECORDS'),
       ],
     );
   }
 
-  Widget _buildListStatCard(String title, String value, IconData icon, Color iconBg, Color iconColor, {String? subtitle}) {
+  Widget _buildListStatCard(
+      String title, String value, IconData icon, Color iconBg, Color iconColor,
+      {String? subtitle}) {
     return Container(
       padding: const EdgeInsets.all(24),
-      decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(24), border: Border.all(color: _lightBorder, width: 2)),
+      decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(24),
+          border: Border.all(color: _lightBorder, width: 2)),
       child: Row(
         children: [
           Container(
             padding: const EdgeInsets.all(12),
-            decoration: BoxDecoration(color: iconBg, borderRadius: BorderRadius.circular(12)),
+            decoration: BoxDecoration(
+                color: iconBg, borderRadius: BorderRadius.circular(12)),
             child: Icon(icon, color: iconColor, size: 20),
           ),
           const SizedBox(width: 16),
@@ -234,62 +394,134 @@ class _AuditorDashboardScreenState extends State<AuditorDashboardScreen> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(title, style: TextStyle(color: _slateText, fontSize: 10, fontWeight: FontWeight.w900, fontStyle: FontStyle.italic, letterSpacing: 1.0)),
+                Text(title,
+                    style: TextStyle(
+                        color: _slateText,
+                        fontSize: 10,
+                        fontWeight: FontWeight.w900,
+                        fontStyle: FontStyle.italic,
+                        letterSpacing: 1.0)),
                 if (subtitle != null) ...[
                   const SizedBox(height: 2),
-                  Text(subtitle, style: const TextStyle(color: Color(0xFFCBD5E1), fontSize: 8, fontWeight: FontWeight.w900, fontStyle: FontStyle.italic, letterSpacing: 0.5)),
+                  Text(subtitle,
+                      style: const TextStyle(
+                          color: Color(0xFFCBD5E1),
+                          fontSize: 8,
+                          fontWeight: FontWeight.w900,
+                          fontStyle: FontStyle.italic,
+                          letterSpacing: 0.5)),
                 ]
               ],
             ),
           ),
-          Text(value, style: TextStyle(color: _navyBlue, fontSize: 24, fontWeight: FontWeight.w900, fontStyle: FontStyle.italic, letterSpacing: -0.5)),
+          Text(value,
+              style: TextStyle(
+                  color: _navyBlue,
+                  fontSize: 24,
+                  fontWeight: FontWeight.w900,
+                  fontStyle: FontStyle.italic,
+                  letterSpacing: -0.5)),
         ],
       ),
     );
   }
 
-  Widget _buildInvestmentProgressCard() {
+  Widget _buildInvestmentProgressCard(AuditorDashboardSummary summary) {
     return Container(
       padding: const EdgeInsets.all(32),
-      decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(32), border: Border.all(color: _lightBorder, width: 2)),
+      decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(32),
+          border: Border.all(color: _lightBorder, width: 2)),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text('INVESTMENT PROGRESS', style: TextStyle(color: _navyBlue, fontSize: 18, fontWeight: FontWeight.w900, fontStyle: FontStyle.italic, letterSpacing: -0.5)),
+          Text('INVESTMENT PROGRESS',
+              style: TextStyle(
+                  color: _navyBlue,
+                  fontSize: 18,
+                  fontWeight: FontWeight.w900,
+                  fontStyle: FontStyle.italic,
+                  letterSpacing: -0.5)),
           const SizedBox(height: 4),
-          Text('TRACK YOUR RETURN ON INVESTMENT', style: TextStyle(color: _slateText, fontSize: 9, fontWeight: FontWeight.w900, fontStyle: FontStyle.italic, letterSpacing: 1.0)),
+          Text('TRACK YOUR RETURN ON INVESTMENT',
+              style: TextStyle(
+                  color: _slateText,
+                  fontSize: 9,
+                  fontWeight: FontWeight.w900,
+                  fontStyle: FontStyle.italic,
+                  letterSpacing: 1.0)),
           const SizedBox(height: 32),
-          
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              Text('TOTAL YIELD LIMIT', style: TextStyle(color: _slateText, fontSize: 10, fontWeight: FontWeight.w900, fontStyle: FontStyle.italic, letterSpacing: 1.0)),
-              const Text('UP TO 100% ROI', style: TextStyle(color: AppColors.goldColor, fontSize: 10, fontWeight: FontWeight.w900, fontStyle: FontStyle.italic, letterSpacing: 1.0)),
+              Text('TOTAL YIELD LIMIT',
+                  style: TextStyle(
+                      color: _slateText,
+                      fontSize: 10,
+                      fontWeight: FontWeight.w900,
+                      fontStyle: FontStyle.italic,
+                      letterSpacing: 1.0)),
+              const Text('UP TO 100% ROI',
+                  style: TextStyle(
+                      color: AppColors.goldColor,
+                      fontSize: 10,
+                      fontWeight: FontWeight.w900,
+                      fontStyle: FontStyle.italic,
+                      letterSpacing: 1.0)),
             ],
           ),
           const SizedBox(height: 8),
-          const Text('₹0 / ₹0', style: TextStyle(color: AppColors.kPrimaryDark, fontSize: 24, fontWeight: FontWeight.w900, fontStyle: FontStyle.italic, letterSpacing: -0.5)),
+          Text('${_money(summary.payoutsNet)} / ${_money(summary.taxable)}',
+              style: const TextStyle(
+                  color: AppColors.kPrimaryDark,
+                  fontSize: 24,
+                  fontWeight: FontWeight.w900,
+                  fontStyle: FontStyle.italic,
+                  letterSpacing: -0.5)),
           const SizedBox(height: 16),
-          
           ClipRRect(
             borderRadius: BorderRadius.circular(8),
-            child: LinearProgressIndicator(value: 0.0, backgroundColor: const Color(0xFFF1F5F9), color: AppColors.goldColor, minHeight: 10),
+            child: LinearProgressIndicator(
+                value: summary.taxable <= 0
+                    ? 0
+                    : (summary.payoutsNet / summary.taxable).clamp(0, 1),
+                backgroundColor: const Color(0xFFF1F5F9),
+                color: AppColors.goldColor,
+                minHeight: 10),
           ),
           const SizedBox(height: 24),
           const Divider(color: Color(0xFFF1F5F9), thickness: 1.5),
           const SizedBox(height: 24),
-          
           Row(
             children: [
-              Expanded(child: _buildProgressStat('YIELD CAP', '₹0', Icons.lock_outline, _slateText)),
-              Expanded(child: _buildProgressStat('EARNED', '₹0', Icons.monetization_on_outlined, AppColors.goldColor)),
+              Expanded(
+                  child: _buildProgressStat('YIELD CAP',
+                      _money(summary.taxable), Icons.lock_outline, _slateText)),
+              Expanded(
+                  child: _buildProgressStat(
+                      'EARNED',
+                      _money(summary.payoutsNet),
+                      Icons.monetization_on_outlined,
+                      AppColors.goldColor)),
             ],
           ),
           const SizedBox(height: 16),
           Row(
             children: [
-              Expanded(child: _buildProgressStat('REMAINING', '₹0', Icons.pending_actions, const Color(0xFF3B82F6))),
-              Expanded(child: _buildProgressStat('DAYS', '0', Icons.calendar_today_outlined, _navyBlue)),
+              Expanded(
+                  child: _buildProgressStat(
+                      'REMAINING',
+                      _money((summary.taxable - summary.payoutsNet)
+                          .clamp(0, double.infinity)),
+                      Icons.pending_actions,
+                      const Color(0xFF3B82F6))),
+              Expanded(
+                  child: _buildProgressStat(
+                      'ACTIVE CYCLES',
+                      summary.activeCycles.toString(),
+                      Icons.calendar_today_outlined,
+                      _navyBlue)),
             ],
           ),
         ],
@@ -297,7 +529,8 @@ class _AuditorDashboardScreenState extends State<AuditorDashboardScreen> {
     );
   }
 
-  Widget _buildProgressStat(String label, String value, IconData icon, Color color) {
+  Widget _buildProgressStat(
+      String label, String value, IconData icon, Color color) {
     return Row(
       children: [
         Icon(icon, color: color, size: 16),
@@ -305,90 +538,170 @@ class _AuditorDashboardScreenState extends State<AuditorDashboardScreen> {
         Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text(label, style: const TextStyle(color: Color(0xFFCBD5E1), fontSize: 8, fontWeight: FontWeight.w900, fontStyle: FontStyle.italic, letterSpacing: 1.0)),
+            Text(label,
+                style: const TextStyle(
+                    color: Color(0xFFCBD5E1),
+                    fontSize: 8,
+                    fontWeight: FontWeight.w900,
+                    fontStyle: FontStyle.italic,
+                    letterSpacing: 1.0)),
             const SizedBox(height: 2),
-            Text(value, style: TextStyle(color: _navyBlue, fontSize: 16, fontWeight: FontWeight.w900, fontStyle: FontStyle.italic)),
+            Text(value,
+                style: TextStyle(
+                    color: _navyBlue,
+                    fontSize: 16,
+                    fontWeight: FontWeight.w900,
+                    fontStyle: FontStyle.italic)),
           ],
         )
       ],
     );
   }
 
-  Widget _buildNetworkExpansionCard() {
+  Widget _buildNetworkExpansionCard(AuditorDashboardSummary summary) {
     return Container(
       padding: const EdgeInsets.all(32),
-      decoration: BoxDecoration(color: _navyBlue, borderRadius: BorderRadius.circular(32), boxShadow: [BoxShadow(color: _navyBlue.withOpacity(0.3), blurRadius: 24, offset: const Offset(0, 12))]),
+      decoration: BoxDecoration(
+          color: _navyBlue,
+          borderRadius: BorderRadius.circular(32),
+          boxShadow: [
+            BoxShadow(
+                color: _navyBlue.withOpacity(0.3),
+                blurRadius: 24,
+                offset: const Offset(0, 12))
+          ]),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Row(
             children: [
-              Container(padding: const EdgeInsets.all(10), decoration: BoxDecoration(color: Colors.white.withOpacity(0.1), borderRadius: BorderRadius.circular(12)), child: const Icon(Icons.hub_outlined, color: AppColors.goldColor, size: 20)),
+              Container(
+                  padding: const EdgeInsets.all(10),
+                  decoration: BoxDecoration(
+                      color: Colors.white.withOpacity(0.1),
+                      borderRadius: BorderRadius.circular(12)),
+                  child: const Icon(Icons.hub_outlined,
+                      color: AppColors.goldColor, size: 20)),
               const SizedBox(width: 16),
               Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    const Text('NETWORK EXPANSION', style: TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.w900, fontStyle: FontStyle.italic, letterSpacing: -0.5)),
+                    const Text('NETWORK EXPANSION',
+                        style: TextStyle(
+                            color: Colors.white,
+                            fontSize: 18,
+                            fontWeight: FontWeight.w900,
+                            fontStyle: FontStyle.italic,
+                            letterSpacing: -0.5)),
                     const SizedBox(height: 4),
-                    Text('EXPAND YOUR DIRECT NETWORK TO EARN 2% FLAT BONUS ON EVERY REFERRAL.', style: TextStyle(color: Colors.white.withOpacity(0.6), fontSize: 8, fontWeight: FontWeight.w900, fontStyle: FontStyle.italic, letterSpacing: 1.0, height: 1.5)),
+                    Text(
+                        'EXPAND YOUR DIRECT NETWORK TO EARN 2% FLAT BONUS ON EVERY REFERRAL.',
+                        style: TextStyle(
+                            color: Colors.white.withOpacity(0.6),
+                            fontSize: 8,
+                            fontWeight: FontWeight.w900,
+                            fontStyle: FontStyle.italic,
+                            letterSpacing: 1.0,
+                            height: 1.5)),
                   ],
                 ),
               )
             ],
           ),
           const SizedBox(height: 32),
-          
+
           Row(
             children: [
-              Expanded(child: _buildNetworkBadge('0', 'REFERRED', AppColors.goldBadgeBg, AppColors.goldColor)),
+              Expanded(
+                  child: _buildNetworkBadge(summary.customers.toString(),
+                      'CUSTOMERS', AppColors.goldBadgeBg, AppColors.goldColor)),
               const SizedBox(width: 12),
-              Expanded(child: _buildNetworkBadge('₹0', 'COMM. EARNED', Colors.white, _navyBlue)),
+              Expanded(
+                  child: _buildNetworkBadge(_money(summary.referralNet),
+                      'COMM. EARNED', Colors.white, _navyBlue)),
             ],
           ),
           const SizedBox(height: 24),
-          
+
           // Referral Code Copy Box
           Container(
             padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
-            decoration: BoxDecoration(color: _navyBlue, borderRadius: BorderRadius.circular(16), border: Border.all(color: Colors.white.withOpacity(0.1))),
+            decoration: BoxDecoration(
+                color: _navyBlue,
+                borderRadius: BorderRadius.circular(16),
+                border: Border.all(color: Colors.white.withOpacity(0.1))),
             child: Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
                 Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
-                  children: const [
-                    Text('YOUR REFERRAL CODE', style: TextStyle(color: Colors.white54, fontSize: 8, fontWeight: FontWeight.w900, fontStyle: FontStyle.italic, letterSpacing: 1.0)),
+                  children: [
+                    Text('YOUR REFERRAL CODE',
+                        style: TextStyle(
+                            color: Colors.white54,
+                            fontSize: 8,
+                            fontWeight: FontWeight.w900,
+                            fontStyle: FontStyle.italic,
+                            letterSpacing: 1.0)),
                     SizedBox(height: 4),
-                    Text('VEV8UOMN', style: TextStyle(color: Colors.white, fontSize: 20, fontWeight: FontWeight.w900, fontStyle: FontStyle.italic, letterSpacing: 2.0)),
+                    Text(_referralCode,
+                        style: TextStyle(
+                            color: Colors.white,
+                            fontSize: 20,
+                            fontWeight: FontWeight.w900,
+                            fontStyle: FontStyle.italic,
+                            letterSpacing: 2.0)),
                   ],
                 ),
                 IconButton(
-                  icon: const Icon(Icons.copy, color: AppColors.goldColor, size: 20),
-                  onPressed: () => _copyToClipboard('VEV8UOMN'),
+                  icon: const Icon(Icons.copy,
+                      color: AppColors.goldColor, size: 20),
+                  onPressed: () => _copyToClipboard(_referralCode),
                 ),
               ],
             ),
           ),
           const SizedBox(height: 24),
-          
+
           SizedBox(
             width: double.infinity,
             child: ElevatedButton.icon(
               onPressed: _routeToReferral,
               icon: const Icon(Icons.people_alt_outlined, size: 16),
-              label: const Text('VIEW NETWORK', style: TextStyle(fontWeight: FontWeight.w900, fontStyle: FontStyle.italic, fontSize: 12, letterSpacing: 1.0)),
-              style: ElevatedButton.styleFrom(backgroundColor: AppColors.kPrimary, foregroundColor: Colors.white, padding: const EdgeInsets.symmetric(vertical: 20), shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16))),
+              label: const Text('VIEW NETWORK',
+                  style: TextStyle(
+                      fontWeight: FontWeight.w900,
+                      fontStyle: FontStyle.italic,
+                      fontSize: 12,
+                      letterSpacing: 1.0)),
+              style: ElevatedButton.styleFrom(
+                  backgroundColor: AppColors.kPrimary,
+                  foregroundColor: Colors.white,
+                  padding: const EdgeInsets.symmetric(vertical: 20),
+                  shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(16))),
             ),
           ),
           const SizedBox(height: 12),
           SizedBox(
             width: double.infinity,
             child: OutlinedButton.icon(
-              onPressed: () => _copyToClipboard('https://vamanan.com/ref/VEV8UOMN'),
+              onPressed: () =>
+                  _copyToClipboard('https://vamanan.com/ref/$_referralCode'),
               icon: const Icon(Icons.link, size: 16),
-              label: const Text('COPY LINK', style: TextStyle(fontWeight: FontWeight.w900, fontStyle: FontStyle.italic, fontSize: 12, letterSpacing: 1.0)),
-              style: OutlinedButton.styleFrom(foregroundColor: Colors.white, side: const BorderSide(color: Colors.white24, width: 2), padding: const EdgeInsets.symmetric(vertical: 20), shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16))),
+              label: const Text('COPY LINK',
+                  style: TextStyle(
+                      fontWeight: FontWeight.w900,
+                      fontStyle: FontStyle.italic,
+                      fontSize: 12,
+                      letterSpacing: 1.0)),
+              style: OutlinedButton.styleFrom(
+                  foregroundColor: Colors.white,
+                  side: const BorderSide(color: Colors.white24, width: 2),
+                  padding: const EdgeInsets.symmetric(vertical: 20),
+                  shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(16))),
             ),
           )
         ],
@@ -396,15 +709,28 @@ class _AuditorDashboardScreenState extends State<AuditorDashboardScreen> {
     );
   }
 
-  Widget _buildNetworkBadge(String value, String label, Color bg, Color textColor) {
+  Widget _buildNetworkBadge(
+      String value, String label, Color bg, Color textColor) {
     return Container(
       padding: const EdgeInsets.symmetric(vertical: 16),
-      decoration: BoxDecoration(color: bg, borderRadius: BorderRadius.circular(16)),
+      decoration:
+          BoxDecoration(color: bg, borderRadius: BorderRadius.circular(16)),
       child: Column(
         children: [
-          Text(value, style: TextStyle(color: textColor, fontSize: 20, fontWeight: FontWeight.w900, fontStyle: FontStyle.italic)),
+          Text(value,
+              style: TextStyle(
+                  color: textColor,
+                  fontSize: 20,
+                  fontWeight: FontWeight.w900,
+                  fontStyle: FontStyle.italic)),
           const SizedBox(height: 4),
-          Text(label, style: TextStyle(color: textColor.withOpacity(0.8), fontSize: 9, fontWeight: FontWeight.w900, fontStyle: FontStyle.italic, letterSpacing: 1.0)),
+          Text(label,
+              style: TextStyle(
+                  color: textColor.withOpacity(0.8),
+                  fontSize: 9,
+                  fontWeight: FontWeight.w900,
+                  fontStyle: FontStyle.italic,
+                  letterSpacing: 1.0)),
         ],
       ),
     );
@@ -413,20 +739,41 @@ class _AuditorDashboardScreenState extends State<AuditorDashboardScreen> {
   Widget _buildGrowthInsightsCard() {
     return Container(
       padding: const EdgeInsets.all(32),
-      decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(32), border: Border.all(color: _lightBorder, width: 2)),
+      decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(32),
+          border: Border.all(color: _lightBorder, width: 2)),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Row(
             children: [
-              Container(padding: const EdgeInsets.all(10), decoration: BoxDecoration(color: _navyBlue, borderRadius: BorderRadius.circular(12)), child: const Icon(Icons.show_chart, color: Colors.white, size: 16)),
+              Container(
+                  padding: const EdgeInsets.all(10),
+                  decoration: BoxDecoration(
+                      color: _navyBlue,
+                      borderRadius: BorderRadius.circular(12)),
+                  child: const Icon(Icons.show_chart,
+                      color: Colors.white, size: 16)),
               const SizedBox(width: 16),
               Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text('GROWTH INSIGHTS', style: TextStyle(color: _navyBlue, fontSize: 16, fontWeight: FontWeight.w900, fontStyle: FontStyle.italic, letterSpacing: -0.5)),
+                  Text('GROWTH INSIGHTS',
+                      style: TextStyle(
+                          color: _navyBlue,
+                          fontSize: 16,
+                          fontWeight: FontWeight.w900,
+                          fontStyle: FontStyle.italic,
+                          letterSpacing: -0.5)),
                   const SizedBox(height: 4),
-                  Text('YOUR PROGRESS CHART • LAST 7 DAYS', style: TextStyle(color: _slateText, fontSize: 9, fontWeight: FontWeight.w900, fontStyle: FontStyle.italic, letterSpacing: 1.0)),
+                  Text('YOUR PROGRESS CHART • LAST 7 DAYS',
+                      style: TextStyle(
+                          color: _slateText,
+                          fontSize: 9,
+                          fontWeight: FontWeight.w900,
+                          fontStyle: FontStyle.italic,
+                          letterSpacing: 1.0)),
                 ],
               )
             ],
@@ -435,13 +782,23 @@ class _AuditorDashboardScreenState extends State<AuditorDashboardScreen> {
           Container(
             height: 150,
             width: double.infinity,
-            decoration: BoxDecoration(color: const Color(0xFFF8FAFC), borderRadius: BorderRadius.circular(16), border: Border.all(color: const Color(0xFFF1F5F9))),
+            decoration: BoxDecoration(
+                color: const Color(0xFFF8FAFC),
+                borderRadius: BorderRadius.circular(16),
+                border: Border.all(color: const Color(0xFFF1F5F9))),
             child: Column(
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
-                Icon(Icons.query_stats, size: 40, color: const Color(0xFFCBD5E1).withOpacity(0.5)),
+                Icon(Icons.query_stats,
+                    size: 40, color: const Color(0xFFCBD5E1).withOpacity(0.5)),
                 const SizedBox(height: 12),
-                Text('NOT ENOUGH DATA TO GENERATE VISUAL TRENDS', style: TextStyle(color: _slateText, fontSize: 9, fontWeight: FontWeight.w900, fontStyle: FontStyle.italic, letterSpacing: 1.0)),
+                Text('NOT ENOUGH DATA TO GENERATE VISUAL TRENDS',
+                    style: TextStyle(
+                        color: _slateText,
+                        fontSize: 9,
+                        fontWeight: FontWeight.w900,
+                        fontStyle: FontStyle.italic,
+                        letterSpacing: 1.0)),
               ],
             ),
           )
@@ -450,20 +807,41 @@ class _AuditorDashboardScreenState extends State<AuditorDashboardScreen> {
     );
   }
 
-  Widget _buildImportantNoticeCard() {
+  Widget _buildImportantNoticeCard(AuditorDashboardSummary summary) {
     return Container(
       padding: const EdgeInsets.all(32),
-      decoration: BoxDecoration(color: AppColors.goldBg, borderRadius: BorderRadius.circular(32), border: Border.all(color: AppColors.goldBorder, width: 2)),
+      decoration: BoxDecoration(
+          color: AppColors.goldBg,
+          borderRadius: BorderRadius.circular(32),
+          border: Border.all(color: AppColors.goldBorder, width: 2)),
       child: Column(
         children: [
-          Container(padding: const EdgeInsets.all(12), decoration: BoxDecoration(color: AppColors.goldColor, borderRadius: BorderRadius.circular(16)), child: const Icon(Icons.warning_amber_rounded, color: Colors.white, size: 24)),
+          Container(
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                  color: AppColors.goldColor,
+                  borderRadius: BorderRadius.circular(16)),
+              child: const Icon(Icons.warning_amber_rounded,
+                  color: Colors.white, size: 24)),
           const SizedBox(height: 16),
-          const Text('IMPORTANT NOTICE', style: TextStyle(color: AppColors.kPrimaryDark, fontSize: 14, fontWeight: FontWeight.w900, fontStyle: FontStyle.italic, letterSpacing: 1.0)),
+          const Text('IMPORTANT NOTICE',
+              style: TextStyle(
+                  color: AppColors.kPrimaryDark,
+                  fontSize: 14,
+                  fontWeight: FontWeight.w900,
+                  fontStyle: FontStyle.italic,
+                  letterSpacing: 1.0)),
           const SizedBox(height: 12),
           Text(
             'KYC VERIFICATION IS REQUIRED BEFORE YOU CAN USE ALL FEATURES. PLEASE COMPLETE YOUR KYC TO UNLOCK WITHDRAWALS AND FULL ACCESS TO THE PLATFORM.',
             textAlign: TextAlign.center,
-            style: TextStyle(color: AppColors.kPrimaryDark.withOpacity(0.8), fontSize: 10, fontWeight: FontWeight.w900, fontStyle: FontStyle.italic, letterSpacing: 0.5, height: 1.5),
+            style: TextStyle(
+                color: AppColors.kPrimaryDark.withOpacity(0.8),
+                fontSize: 10,
+                fontWeight: FontWeight.w900,
+                fontStyle: FontStyle.italic,
+                letterSpacing: 0.5,
+                height: 1.5),
           ),
         ],
       ),
@@ -473,18 +851,45 @@ class _AuditorDashboardScreenState extends State<AuditorDashboardScreen> {
   Widget _buildWalletOperationsCard() {
     return Container(
       padding: const EdgeInsets.all(32),
-      decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(32), border: Border.all(color: _lightBorder, width: 2)),
+      decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(32),
+          border: Border.all(color: _lightBorder, width: 2)),
       child: Column(
         children: [
-          Container(padding: const EdgeInsets.all(12), decoration: BoxDecoration(color: _navyBlue, borderRadius: BorderRadius.circular(12)), child: const Icon(Icons.account_balance_wallet_outlined, color: Colors.white, size: 20)),
+          Container(
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                  color: _navyBlue, borderRadius: BorderRadius.circular(12)),
+              child: const Icon(Icons.account_balance_wallet_outlined,
+                  color: Colors.white, size: 20)),
           const SizedBox(height: 16),
-          Text('WALLET OPERATIONS', style: TextStyle(color: _navyBlue, fontSize: 16, fontWeight: FontWeight.w900, fontStyle: FontStyle.italic, letterSpacing: -0.5)),
+          Text('WALLET OPERATIONS',
+              style: TextStyle(
+                  color: _navyBlue,
+                  fontSize: 16,
+                  fontWeight: FontWeight.w900,
+                  fontStyle: FontStyle.italic,
+                  letterSpacing: -0.5)),
           const SizedBox(height: 4),
-          Text('RECENT APPROVED PAYOUTS & DEPOSITS', style: TextStyle(color: _slateText, fontSize: 9, fontWeight: FontWeight.w900, fontStyle: FontStyle.italic, letterSpacing: 1.0)),
+          Text('RECENT APPROVED PAYOUTS & DEPOSITS',
+              style: TextStyle(
+                  color: _slateText,
+                  fontSize: 9,
+                  fontWeight: FontWeight.w900,
+                  fontStyle: FontStyle.italic,
+                  letterSpacing: 1.0)),
           const SizedBox(height: 32),
-          Icon(Icons.receipt_long_outlined, size: 48, color: const Color(0xFFCBD5E1).withOpacity(0.5)),
+          Icon(Icons.receipt_long_outlined,
+              size: 48, color: const Color(0xFFCBD5E1).withOpacity(0.5)),
           const SizedBox(height: 16),
-          Text('NO RECENT TRANSACTIONS DETECTED', style: TextStyle(color: _slateText, fontSize: 9, fontWeight: FontWeight.w900, fontStyle: FontStyle.italic, letterSpacing: 1.0)),
+          Text('NO RECENT TRANSACTIONS DETECTED',
+              style: TextStyle(
+                  color: _slateText,
+                  fontSize: 9,
+                  fontWeight: FontWeight.w900,
+                  fontStyle: FontStyle.italic,
+                  letterSpacing: 1.0)),
         ],
       ),
     );
@@ -493,21 +898,42 @@ class _AuditorDashboardScreenState extends State<AuditorDashboardScreen> {
   Widget _buildFeedbackSection() {
     return Container(
       padding: const EdgeInsets.all(32),
-      decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(32), border: Border.all(color: _lightBorder, width: 2)),
+      decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(32),
+          border: Border.all(color: _lightBorder, width: 2)),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Row(
             children: [
-              Container(padding: const EdgeInsets.all(12), decoration: BoxDecoration(color: _navyBlue, borderRadius: BorderRadius.circular(12)), child: const Icon(Icons.chat_bubble_outline, color: AppColors.goldColor, size: 18)),
+              Container(
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                      color: _navyBlue,
+                      borderRadius: BorderRadius.circular(12)),
+                  child: const Icon(Icons.chat_bubble_outline,
+                      color: AppColors.goldColor, size: 18)),
               const SizedBox(width: 16),
               Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text('FEEDBACK & REMARKS', style: TextStyle(color: _navyBlue, fontSize: 16, fontWeight: FontWeight.w900, fontStyle: FontStyle.italic, letterSpacing: -0.5)),
+                    Text('FEEDBACK & REMARKS',
+                        style: TextStyle(
+                            color: _navyBlue,
+                            fontSize: 16,
+                            fontWeight: FontWeight.w900,
+                            fontStyle: FontStyle.italic,
+                            letterSpacing: -0.5)),
                     const SizedBox(height: 4),
-                    Text('SHARE YOUR THOUGHTS • SEE REPLIES FROM OUR TEAM', style: TextStyle(color: _slateText, fontSize: 9, fontWeight: FontWeight.w900, fontStyle: FontStyle.italic, letterSpacing: 0.5)),
+                    Text('SHARE YOUR THOUGHTS • SEE REPLIES FROM OUR TEAM',
+                        style: TextStyle(
+                            color: _slateText,
+                            fontSize: 9,
+                            fontWeight: FontWeight.w900,
+                            fontStyle: FontStyle.italic,
+                            letterSpacing: 0.5)),
                   ],
                 ),
               )
@@ -516,9 +942,10 @@ class _AuditorDashboardScreenState extends State<AuditorDashboardScreen> {
           const SizedBox(height: 24),
           const Divider(color: Color(0xFFF1F5F9), thickness: 2),
           const SizedBox(height: 24),
-          
           Container(
-            decoration: BoxDecoration(color: const Color(0xFFF8FAFC), borderRadius: BorderRadius.circular(16)),
+            decoration: BoxDecoration(
+                color: const Color(0xFFF8FAFC),
+                borderRadius: BorderRadius.circular(16)),
             padding: const EdgeInsets.all(4),
             child: Row(
               children: [
@@ -529,7 +956,6 @@ class _AuditorDashboardScreenState extends State<AuditorDashboardScreen> {
             ),
           ),
           const SizedBox(height: 32),
-          
           AnimatedSwitcher(
             duration: const Duration(milliseconds: 300),
             child: _buildFeedbackContent(),
@@ -547,8 +973,25 @@ class _AuditorDashboardScreenState extends State<AuditorDashboardScreen> {
         child: AnimatedContainer(
           duration: const Duration(milliseconds: 200),
           padding: const EdgeInsets.symmetric(vertical: 12),
-          decoration: BoxDecoration(color: isActive ? const Color(0xFF2563EB) : Colors.transparent, borderRadius: BorderRadius.circular(12), boxShadow: isActive ? [BoxShadow(color: const Color(0xFF2563EB).withOpacity(0.3), blurRadius: 10, offset: const Offset(0, 4))] : []),
-          child: Text(title, textAlign: TextAlign.center, style: TextStyle(color: isActive ? Colors.white : _slateText, fontSize: 10, fontWeight: FontWeight.w900, fontStyle: FontStyle.italic, letterSpacing: 0.5)),
+          decoration: BoxDecoration(
+              color: isActive ? const Color(0xFF2563EB) : Colors.transparent,
+              borderRadius: BorderRadius.circular(12),
+              boxShadow: isActive
+                  ? [
+                      BoxShadow(
+                          color: const Color(0xFF2563EB).withOpacity(0.3),
+                          blurRadius: 10,
+                          offset: const Offset(0, 4))
+                    ]
+                  : []),
+          child: Text(title,
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                  color: isActive ? Colors.white : _slateText,
+                  fontSize: 10,
+                  fontWeight: FontWeight.w900,
+                  fontStyle: FontStyle.italic,
+                  letterSpacing: 0.5)),
         ),
       ),
     );
@@ -561,15 +1004,45 @@ class _AuditorDashboardScreenState extends State<AuditorDashboardScreen> {
         children: [
           TextField(
             controller: _feedbackSubjectCtrl,
-            style: TextStyle(color: _navyBlue, fontSize: 14, fontWeight: FontWeight.w900, fontStyle: FontStyle.italic),
-            decoration: InputDecoration(hintText: 'SUBJECT (E.G. PAYOUT QUERY)', hintStyle: const TextStyle(color: Color(0xFFCBD5E1), fontSize: 11, fontWeight: FontWeight.w900, fontStyle: FontStyle.italic), filled: true, fillColor: const Color(0xFFF8FAFC), border: OutlineInputBorder(borderRadius: BorderRadius.circular(16), borderSide: BorderSide.none)),
+            style: TextStyle(
+                color: _navyBlue,
+                fontSize: 14,
+                fontWeight: FontWeight.w900,
+                fontStyle: FontStyle.italic),
+            decoration: InputDecoration(
+                hintText: 'SUBJECT (E.G. PAYOUT QUERY)',
+                hintStyle: const TextStyle(
+                    color: Color(0xFFCBD5E1),
+                    fontSize: 11,
+                    fontWeight: FontWeight.w900,
+                    fontStyle: FontStyle.italic),
+                filled: true,
+                fillColor: const Color(0xFFF8FAFC),
+                border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(16),
+                    borderSide: BorderSide.none)),
           ),
           const SizedBox(height: 16),
           TextField(
             controller: _feedbackMsgCtrl,
             maxLines: 4,
-            style: TextStyle(color: _navyBlue, fontSize: 14, fontWeight: FontWeight.w900, fontStyle: FontStyle.italic),
-            decoration: InputDecoration(hintText: 'YOUR MESSAGE...', hintStyle: const TextStyle(color: Color(0xFFCBD5E1), fontSize: 11, fontWeight: FontWeight.w900, fontStyle: FontStyle.italic), filled: true, fillColor: const Color(0xFFF8FAFC), border: OutlineInputBorder(borderRadius: BorderRadius.circular(16), borderSide: BorderSide.none)),
+            style: TextStyle(
+                color: _navyBlue,
+                fontSize: 14,
+                fontWeight: FontWeight.w900,
+                fontStyle: FontStyle.italic),
+            decoration: InputDecoration(
+                hintText: 'YOUR MESSAGE...',
+                hintStyle: const TextStyle(
+                    color: Color(0xFFCBD5E1),
+                    fontSize: 11,
+                    fontWeight: FontWeight.w900,
+                    fontStyle: FontStyle.italic),
+                filled: true,
+                fillColor: const Color(0xFFF8FAFC),
+                border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(16),
+                    borderSide: BorderSide.none)),
           ),
           const SizedBox(height: 24),
           SizedBox(
@@ -577,8 +1050,17 @@ class _AuditorDashboardScreenState extends State<AuditorDashboardScreen> {
             child: ElevatedButton.icon(
               onPressed: _submitFeedback,
               icon: const Icon(Icons.send, size: 16),
-              label: const Text('SUBMIT FEEDBACK', style: TextStyle(fontWeight: FontWeight.w900, fontStyle: FontStyle.italic, letterSpacing: 1.0)),
-              style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF2563EB), foregroundColor: Colors.white, padding: const EdgeInsets.symmetric(vertical: 16), shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16))),
+              label: const Text('SUBMIT FEEDBACK',
+                  style: TextStyle(
+                      fontWeight: FontWeight.w900,
+                      fontStyle: FontStyle.italic,
+                      letterSpacing: 1.0)),
+              style: ElevatedButton.styleFrom(
+                  backgroundColor: const Color(0xFF2563EB),
+                  foregroundColor: Colors.white,
+                  padding: const EdgeInsets.symmetric(vertical: 16),
+                  shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(16))),
             ),
           )
         ],
@@ -590,9 +1072,16 @@ class _AuditorDashboardScreenState extends State<AuditorDashboardScreen> {
         width: double.infinity,
         child: Column(
           children: [
-            Icon(Icons.inbox_outlined, size: 48, color: const Color(0xFFCBD5E1).withOpacity(0.5)),
+            Icon(Icons.inbox_outlined,
+                size: 48, color: const Color(0xFFCBD5E1).withOpacity(0.5)),
             const SizedBox(height: 16),
-            const Text('NO REPLIES FROM THE TEAM YET', style: TextStyle(color: Color(0xFF94A3B8), fontSize: 11, fontWeight: FontWeight.w900, fontStyle: FontStyle.italic, letterSpacing: 1.0)),
+            const Text('NO REPLIES FROM THE TEAM YET',
+                style: TextStyle(
+                    color: Color(0xFF94A3B8),
+                    fontSize: 11,
+                    fontWeight: FontWeight.w900,
+                    fontStyle: FontStyle.italic,
+                    letterSpacing: 1.0)),
           ],
         ),
       );
@@ -603,9 +1092,16 @@ class _AuditorDashboardScreenState extends State<AuditorDashboardScreen> {
         width: double.infinity,
         child: Column(
           children: [
-            Icon(Icons.history, size: 48, color: const Color(0xFFCBD5E1).withOpacity(0.5)),
+            Icon(Icons.history,
+                size: 48, color: const Color(0xFFCBD5E1).withOpacity(0.5)),
             const SizedBox(height: 16),
-            const Text('NO SUBMISSIONS YET', style: TextStyle(color: Color(0xFF94A3B8), fontSize: 11, fontWeight: FontWeight.w900, fontStyle: FontStyle.italic, letterSpacing: 1.0)),
+            const Text('NO SUBMISSIONS YET',
+                style: TextStyle(
+                    color: Color(0xFF94A3B8),
+                    fontSize: 11,
+                    fontWeight: FontWeight.w900,
+                    fontStyle: FontStyle.italic,
+                    letterSpacing: 1.0)),
           ],
         ),
       );

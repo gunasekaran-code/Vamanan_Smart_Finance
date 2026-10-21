@@ -23,6 +23,14 @@ class ApiResponse<T> {
     this.raw = const {},
   });
 
+  // 👇 ADDED THIS FACTORY 👇
+  /// Helper constructor for successful responses.
+  factory ApiResponse.success(T data, [String? message]) => ApiResponse<T>(
+        success: true,
+        message: message ?? 'Success',
+        data: data,
+      );
+
   factory ApiResponse.failure(String message) =>
       ApiResponse<T>(success: false, message: message);
 

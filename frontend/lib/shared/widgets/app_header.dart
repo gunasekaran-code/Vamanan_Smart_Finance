@@ -4,6 +4,10 @@ import 'package:frontend/core/models/app_user.dart';
 import 'package:frontend/core/routing/app_routes.dart';
 import 'package:frontend/core/services/session_service.dart';
 import 'package:frontend/core/theme/app_theme.dart';
+import 'package:frontend/services/attention_center_service.dart';
+import 'package:frontend/services/cart_service.dart';
+import 'package:frontend/shared/widgets/attention_panel.dart';
+import 'package:frontend/shared/widgets/shell_navigation_observer.dart';
 
 class AppHeader extends StatefulWidget implements PreferredSizeWidget {
   final AppUser? user;
@@ -27,11 +31,42 @@ class _AppHeaderState extends State<AppHeader> {
   final FocusNode _searchFocusNode = FocusNode();
   bool _isCompactWidth = false;
 
-  final GlobalKey _notificationKey = GlobalKey();
   final GlobalKey _avatarKey = GlobalKey();
 
   @override
+  void initState() {
+    super.initState();
+    _startAttentionFeed();
+    ShellNavigationObserver.changes.addListener(_onShellNavigation);
+  }
+
+  /// A page was pushed onto / popped off a tab — re-evaluate the back arrow.
+  void _onShellNavigation() {
+    if (mounted) setState(() {});
+  }
+
+  @override
+  void didUpdateWidget(covariant AppHeader oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.user?.id != widget.user?.id ||
+        oldWidget.user?.role != widget.user?.role) {
+      _startAttentionFeed();
+    }
+  }
+
+  /// Live "needs attention" counts behind the bell (polled app-wide).
+  void _startAttentionFeed() {
+    final user = widget.user;
+    if (user == null || user.id.isEmpty) {
+      AttentionCenter.instance.stop();
+      return;
+    }
+    AttentionCenter.instance.start(userId: user.id, role: user.role);
+  }
+
+  @override
   void dispose() {
+    ShellNavigationObserver.changes.removeListener(_onShellNavigation);
     _searchController.dispose();
     _searchFocusNode.dispose();
     super.dispose();
@@ -54,14 +89,47 @@ class _AppHeaderState extends State<AppHeader> {
     }
   }
 
+  String _currentLocation() =>
+      GoRouter.maybeOf(context)?.state.matchedLocation ?? '';
+
+  /// Pages that show a back button in place of the drawer button: the listed
+  /// child routes, plus any page pushed on top of the current tab.
+  bool _showsBackButton(String location) =>
+      (GoRouter.maybeOf(context)?.canPop() ?? false) ||
+      location == AppRoutes.cart ||
+      location == AppRoutes.assetMovementHistory ||
+      location == AppRoutes.assetNew ||
+      location == AppRoutes.assetEdit ||
+      location == AppRoutes.userProfile ||
+      location == AppRoutes.agreementVerification;
+
+  void _goBack() {
+    final router = GoRouter.of(context);
+    if (router.canPop()) {
+      router.pop();
+    } else if (_currentLocation().startsWith('/asset-inventory/')) {
+      context.go('/asset-inventory');
+    } else if (_currentLocation() == AppRoutes.userProfile) {
+      context.go('/users');
+    } else if (_currentLocation() == AppRoutes.agreementVerification) {
+      context.go(AppRoutes.archive);
+    } else {
+      context.go(AppRoutes.auditorBuy);
+    }
+  }
+
   String _currentPageTitle() {
-    final state = GoRouter.maybeOf(context)?.state;
-    final location = state?.matchedLocation ?? '';
+    final location = _currentLocation();
     final path =
         location.isEmpty || location == '/' ? AppRoutes.dashboard : location;
 
     final titles = <String, String>{
       AppRoutes.dashboard: 'Dashboard',
+      AppRoutes.cart: 'My Cart',
+      AppRoutes.assetMovementHistory: 'Movement History',
+      AppRoutes.assetNew: 'New Asset',
+      AppRoutes.assetEdit: 'Edit Asset',
+      AppRoutes.userProfile: 'User Profile',
       AppRoutes.verify: 'Verify',
       AppRoutes.security: 'Security & 2FA',
       AppRoutes.members: 'Members',
@@ -127,6 +195,7 @@ class _AppHeaderState extends State<AppHeader> {
       AppRoutes.support: 'Support',
       AppRoutes.agreements: 'Agreements',
       AppRoutes.archive: 'Archive',
+      AppRoutes.agreementVerification: 'Agreement Verification',
       AppRoutes.disputes: 'Disputes',
       AppRoutes.rules: 'Rules',
     };
@@ -161,6 +230,13 @@ class _AppHeaderState extends State<AppHeader> {
       clipBehavior: Clip.none,
       children: [
         AppBar(
+          leading: _showsBackButton(_currentLocation())
+              ? IconButton(
+                  tooltip: 'Back',
+                  onPressed: _goBack,
+                  icon: const Icon(Icons.arrow_back_rounded),
+                )
+              : null,
           titleSpacing: _isCompactWidth ? 10 : 16,
           title: FittedBox(
             fit: BoxFit.scaleDown,
@@ -182,8 +258,9 @@ class _AppHeaderState extends State<AppHeader> {
                 size: _isCompactWidth ? 24 : 27,
               ),
             ),
+            if (CartService.isAvailableFor(widget.user?.role))
+              _CartButton(compact: _isCompactWidth),
             IconButton(
-              key: _notificationKey,
               tooltip: 'Notifications',
               padding: EdgeInsets.zero,
               constraints: BoxConstraints.tightFor(
@@ -191,29 +268,45 @@ class _AppHeaderState extends State<AppHeader> {
                 height: 44,
               ),
               visualDensity: VisualDensity.compact,
-              icon: Stack(
-                clipBehavior: Clip.none,
-                children: [
-                  const Icon(Icons.notifications_none_rounded, size: 26),
-                  Positioned(
-                    right: -2,
-                    top: -2,
-                    child: Container(
-                      width: 9,
-                      height: 9,
-                      decoration: BoxDecoration(
-                        color: AppColors.kDanger,
-                        shape: BoxShape.circle,
-                        border:
-                            Border.all(color: AppColors.kSurface, width: 1.5),
-                      ),
-                    ),
-                  ),
-                ],
+              icon: AnimatedBuilder(
+                animation: AttentionCenter.instance,
+                builder: (context, _) {
+                  final fresh = AttentionCenter.instance.totalNew;
+                  return Stack(
+                    clipBehavior: Clip.none,
+                    children: [
+                      const Icon(Icons.notifications_none_rounded, size: 26),
+                      if (fresh > 0)
+                        Positioned(
+                          right: -6,
+                          top: -5,
+                          child: Container(
+                            constraints: const BoxConstraints(minWidth: 17),
+                            height: 17,
+                            padding: const EdgeInsets.symmetric(horizontal: 4),
+                            alignment: Alignment.center,
+                            decoration: BoxDecoration(
+                              color: AppColors.kDanger,
+                              borderRadius: BorderRadius.circular(9),
+                              border: Border.all(
+                                  color: AppColors.kSurface, width: 1.5),
+                            ),
+                            child: Text(
+                              fresh > 99 ? '99+' : '$fresh',
+                              style: const TextStyle(
+                                color: Colors.white,
+                                fontSize: 9,
+                                fontWeight: FontWeight.w800,
+                                height: 1,
+                              ),
+                            ),
+                          ),
+                        ),
+                    ],
+                  );
+                },
               ),
-              onPressed: () {
-                _showNotificationMenu(context, _notificationKey);
-              },
+              onPressed: () => showAttentionPanel(context),
             ),
             InkWell(
               key: _avatarKey,
@@ -380,43 +473,6 @@ class _AppHeaderState extends State<AppHeader> {
     // Implement your search logic here
   }
 
-  void _showNotificationMenu(BuildContext context, GlobalKey anchorKey) {
-    final RenderBox anchorBox =
-        anchorKey.currentContext!.findRenderObject() as RenderBox;
-    final RenderBox overlayBox =
-        Overlay.of(context).context.findRenderObject() as RenderBox;
-
-    final Offset anchorBottomRight = anchorBox.localToGlobal(
-      anchorBox.size.bottomRight(Offset.zero),
-      ancestor: overlayBox,
-    );
-
-    final screenWidth = MediaQuery.of(context).size.width;
-    const double maxMenuWidth = 320.0;
-    final double menuWidth =
-        screenWidth < (maxMenuWidth + 32) ? screenWidth - 32 : maxMenuWidth;
-
-    showMenu(
-      context: context,
-      color: Colors.white,
-      elevation: 12,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-      position: RelativeRect.fromLTRB(
-        overlayBox.size.width - menuWidth - 16,
-        anchorBottomRight.dy + 8,
-        16,
-        0,
-      ),
-      items: [
-        PopupMenuItem(
-          enabled: false,
-          padding: EdgeInsets.zero,
-          child: SizedBox(width: menuWidth, child: _buildNotificationMenu()),
-        ),
-      ],
-    );
-  }
-
   void _showProfileMenu(BuildContext context, GlobalKey anchorKey) {
     final RenderBox anchorBox =
         anchorKey.currentContext!.findRenderObject() as RenderBox;
@@ -449,85 +505,6 @@ class _AppHeaderState extends State<AppHeader> {
           enabled: false,
           padding: EdgeInsets.zero,
           child: SizedBox(width: menuWidth, child: _buildProfileMenu()),
-        ),
-      ],
-    );
-  }
-
-  Widget _buildNotificationMenu() {
-    return Column(
-      mainAxisSize: MainAxisSize.min,
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        const Padding(
-          padding: EdgeInsets.symmetric(horizontal: 16, vertical: 14),
-          child: Text(
-            'Notifications',
-            style: TextStyle(
-              fontWeight: FontWeight.w800,
-              fontSize: 16,
-              color: AppColors.kTextDark,
-            ),
-          ),
-        ),
-        const Divider(height: 1, color: AppColors.kBorder),
-        ListTile(
-          contentPadding:
-              const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
-          leading: Container(
-            padding: const EdgeInsets.all(8),
-            decoration: BoxDecoration(
-              color: AppColors.kPrimary.withOpacity(0.15),
-              shape: BoxShape.circle,
-            ),
-            child: const Icon(Icons.download_done_rounded,
-                color: AppColors.kPrimary, size: 20),
-          ),
-          title: const Text('System Update Ready',
-              style: TextStyle(fontWeight: FontWeight.w600, fontSize: 14)),
-          subtitle: const Text(
-              'Core engine v2.4 has been installed successfully.',
-              style: TextStyle(fontSize: 13)),
-          onTap: () => Navigator.pop(context),
-        ),
-        ListTile(
-          contentPadding:
-              const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
-          leading: Container(
-            padding: const EdgeInsets.all(8),
-            decoration: BoxDecoration(
-              color: AppColors.kDanger.withOpacity(0.15),
-              shape: BoxShape.circle,
-            ),
-            child: const Icon(Icons.warning_amber_rounded,
-                color: AppColors.kDanger, size: 20),
-          ),
-          title: const Text('Overdue Alert',
-              style: TextStyle(fontWeight: FontWeight.w600, fontSize: 14)),
-          subtitle: const Text('3 branches have pending audit clearance.',
-              style: TextStyle(fontSize: 13)),
-          onTap: () => Navigator.pop(context),
-        ),
-        const Divider(height: 1, color: AppColors.kBorder),
-        InkWell(
-          onTap: () => Navigator.pop(context),
-          borderRadius: const BorderRadius.only(
-              bottomLeft: Radius.circular(20),
-              bottomRight: Radius.circular(20)),
-          child: Container(
-            width: double.infinity,
-            padding: const EdgeInsets.symmetric(vertical: 12),
-            child: const Center(
-              child: Text(
-                'Mark all as read',
-                style: TextStyle(
-                  color: AppColors.kPrimary,
-                  fontWeight: FontWeight.w600,
-                  fontSize: 14,
-                ),
-              ),
-            ),
-          ),
         ),
       ],
     );
@@ -613,6 +590,65 @@ class _AppHeaderState extends State<AppHeader> {
         ),
         const SizedBox(height: 8),
       ],
+    );
+  }
+}
+
+/// Header cart icon with a live item-count badge; opens [AppRoutes.cart].
+class _CartButton extends StatelessWidget {
+  final bool compact;
+
+  const _CartButton({required this.compact});
+
+  @override
+  Widget build(BuildContext context) {
+    final cart = CartService.instance;
+    return ListenableBuilder(
+      listenable: cart,
+      builder: (context, _) {
+        final count = cart.itemCount;
+        return IconButton(
+          tooltip: count == 0 ? 'Cart' : 'Cart ($count)',
+          padding: EdgeInsets.zero,
+          constraints: BoxConstraints.tightFor(
+            width: compact ? 40 : 44,
+            height: 44,
+          ),
+          visualDensity: VisualDensity.compact,
+          onPressed: () => context.go(AppRoutes.cart),
+          icon: Stack(
+            clipBehavior: Clip.none,
+            children: [
+              const Icon(Icons.shopping_cart_outlined, size: 25),
+              if (count > 0)
+                Positioned(
+                  right: -7,
+                  top: -6,
+                  child: Container(
+                    constraints: const BoxConstraints(minWidth: 17),
+                    height: 17,
+                    padding: const EdgeInsets.symmetric(horizontal: 4),
+                    alignment: Alignment.center,
+                    decoration: BoxDecoration(
+                      color: AppColors.goldColor,
+                      borderRadius: BorderRadius.circular(9),
+                      border: Border.all(color: AppColors.kSurface, width: 1.5),
+                    ),
+                    child: Text(
+                      count > 99 ? '99+' : '$count',
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 9,
+                        fontWeight: FontWeight.w900,
+                        height: 1,
+                      ),
+                    ),
+                  ),
+                ),
+            ],
+          ),
+        );
+      },
     );
   }
 }

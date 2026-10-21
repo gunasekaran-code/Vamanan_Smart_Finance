@@ -19,16 +19,18 @@ import 'package:frontend/features/auth/register_screen.dart';
 // --- Screen Imports ---
 import 'package:frontend/core/models/user_role.dart';
 import 'package:frontend/features/admin/admin_dashboard_screen.dart';
-import 'package:frontend/features/admin/profile_screen.dart';
-import 'package:frontend/features/admin/customer_screen.dart';
-import 'package:frontend/features/admin/support_screen.dart';
+import 'package:frontend/features/manager/manager_profile_screen.dart';
+import 'package:frontend/features/manager/manager_customer_screen.dart';
+import 'package:frontend/features/manager/support_screen.dart';
 import 'package:frontend/features/advocate/agreements_screen.dart';
 import 'package:frontend/features/admin/archive_screen.dart';
-import 'package:frontend/features/admin/archive_agreements_screen.dart';
-import 'package:frontend/features/admin/customer_directory_screen.dart'
+import 'package:frontend/features/advocate/advocate_archive_screen.dart';
+import 'package:frontend/features/advocate/agreement_verification_screen.dart';
+import 'package:frontend/models/advocate_archive_model.dart';
+import 'package:frontend/features/advocate/advocate_customer_screen.dart'
     as advocate_customers;
 import 'package:frontend/features/advocate/advocate_profile_screen.dart';
-import 'package:frontend/features/admin/disputes_screen.dart';
+import 'package:frontend/features/advocate/advocate_disputes_screen.dart';
 import 'package:frontend/features/admin/rules_screen.dart';
 import 'package:frontend/features/advocate/investment_screen.dart';
 import 'package:frontend/features/advocate/investment_history_screen.dart';
@@ -59,7 +61,7 @@ import 'package:frontend/features/shared/recruitment_screen.dart';
 
 // Report Screens
 import 'package:frontend/features/shared/cashback_reports_screen.dart';
-import 'package:frontend/features/shared/withdrawal_reports_screen.dart'; 
+import 'package:frontend/features/shared/withdrawal_reports_screen.dart';
 import 'package:frontend/features/shared/transaction_reports_screen.dart';
 import 'package:frontend/features/shared/investment_reports_screen.dart';
 import 'package:frontend/features/shared/referral_reports_screen.dart';
@@ -68,16 +70,14 @@ import 'package:frontend/features/shared/payout_reports_screen.dart';
 // Manager Screens
 import 'package:frontend/features/manager/manager_dashboard_screen.dart';
 import 'package:frontend/features/manager/identity_verification_screen.dart';
-import 'package:frontend/features/manager/product_requests_screen_manager.dart';
+import 'package:frontend/features/manager/manager_product_requests_screen.dart';
 import 'package:frontend/features/manager/cashback_monitoring_screen.dart';
-import 'package:frontend/features/manager/staff_infrastructure_screen.dart';
+import 'package:frontend/features/manager/staff_add_screen.dart';
 import 'package:frontend/features/manager/withdraw_liquidity_screen.dart';
 
-
 // Advocate Screens
-import 'package:frontend/features/advocate/advocator_dashboard_screen.dart';
-import 'package:frontend/features/advocate/purchase_verification_page.dart';
-
+import 'package:frontend/features/advocate/advocate_dashboard_screen.dart';
+import 'package:frontend/features/advocate/advocate_purchase_screen.dart';
 
 // Auditor Screens
 import 'package:frontend/features/auditor/auditor_profile_screen.dart';
@@ -92,14 +92,22 @@ import 'package:frontend/features/auditor/auditor_cashback_application_screen.da
 import 'package:frontend/features/auditor/auditor_cashback_screen.dart';
 import 'package:frontend/features/auditor/auditor_request_screen.dart';
 import 'package:frontend/features/auditor/auditor_buy_screen.dart';
+import 'package:frontend/features/auditor/auditor_cart_screen.dart';
+import 'package:frontend/features/shared/asset_movement_history_screen.dart';
+import 'package:frontend/features/shared/asset_form_screen.dart';
+import 'package:frontend/models/asset_model.dart';
+import 'package:frontend/services/cart_service.dart';
 import 'package:frontend/features/auditor/auditor_dashboard_screen.dart';
-
-
-
+import 'package:frontend/features/customer/customer_cashback_screen.dart';
+import 'package:frontend/features/customer/customer_dashboard_screen.dart';
+import 'package:frontend/features/customer/customer_profile_screen.dart';
 
 import 'package:frontend/features/shared/users_directory_screen.dart';
+import 'package:frontend/features/shared/user_profile_screen.dart';
+import 'package:frontend/models/admin_user_model.dart';
 import 'package:frontend/features/shared/settings_page.dart';
 
+import 'package:frontend/shared/widgets/shell_navigation_observer.dart';
 import 'app_routes.dart';
 
 class AppRouter {
@@ -116,8 +124,11 @@ class AppRouter {
       GoRoute(path: AppRoutes.root, redirect: (_, __) => AppRoutes.splash),
       GoRoute(path: AppRoutes.splash, builder: (_, __) => const SplashScreen()),
       GoRoute(path: AppRoutes.login, builder: (_, __) => const LoginScreen()),
-      GoRoute(path: AppRoutes.recoverKey, builder: (_, __) => const RecoverKeyScreen()),
-      GoRoute(path: AppRoutes.register, builder: (_, __) => const RegisterScreen()),
+      GoRoute(
+          path: AppRoutes.recoverKey,
+          builder: (_, __) => const RecoverKeyScreen()),
+      GoRoute(
+          path: AppRoutes.register, builder: (_, __) => const RegisterScreen()),
       GoRoute(
         path: AppRoutes.unauthorized,
         builder: (_, __) => const UnauthorizedScreen(),
@@ -128,116 +139,219 @@ class AppRouter {
         builder: (context, state, navigationShell) =>
             AppShell(navigationShell: navigationShell),
         branches: [
-        
           // ============================================================
           // AUDITOR SECTION
           // ============================================================
-           StatefulShellBranch(routes: [
+          StatefulShellBranch(observers: [
+            ShellNavigationObserver()
+          ], routes: [
             GoRoute(
               path: '/auditor-profile',
-              builder: (_, __) => const AuditorProfileScreen(),
+              builder: (_, __) {
+                final userId = int.tryParse(
+                  SessionService.instance.currentUser?.id ?? '',
+                );
+                return userId == null
+                    ? const UnauthorizedScreen()
+                    : AuditorProfileScreen(userId: userId);
+              },
             ),
           ]),
-          StatefulShellBranch(routes: [
+          StatefulShellBranch(observers: [
+            ShellNavigationObserver()
+          ], routes: [
             GoRoute(
               path: '/auditor-agreements',
-              builder: (_, __) => const AuditorAgreementScreen(),
+              builder: (_, __) {
+                final userId = SessionService.instance.currentUser?.id;
+                if (userId == null || userId.isEmpty) {
+                  return const UnauthorizedScreen();
+                }
+                return AuditorAgreementScreen(userId: userId);
+              },
             ),
           ]),
-          StatefulShellBranch(routes: [
+          StatefulShellBranch(observers: [
+            ShellNavigationObserver()
+          ], routes: [
             GoRoute(
               path: '/auditor-kyc',
-              builder: (_, __) => const AuditorKycScreen(),
+              builder: (_, __) {
+                final userId = SessionService.instance.currentUser?.id;
+                if (userId == null || userId.isEmpty) {
+                  return const UnauthorizedScreen();
+                }
+                return AuditorKycScreen(userId: userId);
+              },
             ),
           ]),
           // AuditorRulesScreen
-          StatefulShellBranch(routes: [
+          StatefulShellBranch(observers: [
+            ShellNavigationObserver()
+          ], routes: [
             GoRoute(
               path: '/auditor-rules',
               builder: (_, __) => const AuditorRulesScreen(),
             ),
           ]),
-          StatefulShellBranch(routes: [
+          StatefulShellBranch(observers: [
+            ShellNavigationObserver()
+          ], routes: [
             GoRoute(
               path: '/auditor-wallets',
-              builder: (_, __) => const AuditorWalletScreen(),
+              builder: (_, __) {
+                final userId = SessionService.instance.currentUser?.id;
+                return userId == null || userId.isEmpty
+                    ? const UnauthorizedScreen()
+                    : AuditorWalletScreen(userId: userId);
+              },
             ),
           ]),
-          StatefulShellBranch(routes: [
+          StatefulShellBranch(observers: [
+            ShellNavigationObserver()
+          ], routes: [
             GoRoute(
               path: '/auditor-transaction',
-              builder: (_, __) => const AuditorWalletTransactionScreen(),
+              builder: (_, __) {
+                final userId = SessionService.instance.currentUser?.id;
+                return userId == null || userId.isEmpty
+                    ? const UnauthorizedScreen()
+                    : AuditorWalletTransactionScreen(userId: userId);
+              },
             ),
           ]),
           //
-          StatefulShellBranch(routes: [
+          StatefulShellBranch(observers: [
+            ShellNavigationObserver()
+          ], routes: [
             GoRoute(
               path: '/auditor-withdrawals',
-              builder: (_, __) => const AuditorWalletWithdrawScreen(),
+              builder: (_, __) {
+                final userId = SessionService.instance.currentUser?.id;
+                return userId == null || userId.isEmpty
+                    ? const UnauthorizedScreen()
+                    : AuditorWalletWithdrawScreen(userId: userId);
+              },
             ),
           ]),
-          StatefulShellBranch(routes: [
+          StatefulShellBranch(observers: [
+            ShellNavigationObserver()
+          ], routes: [
             GoRoute(
               path: '/auditor-referral',
-              builder: (_, __) => const AuditorReferralScreen(),
+              builder: (_, __) {
+                final userId = SessionService.instance.currentUser?.id;
+                if (userId == null || userId.isEmpty) {
+                  return const UnauthorizedScreen();
+                }
+                return AuditorReferralScreen(userId: userId);
+              },
             ),
           ]),
-          StatefulShellBranch(routes: [
+          StatefulShellBranch(observers: [
+            ShellNavigationObserver()
+          ], routes: [
             GoRoute(
+              // IMPORTANT: Ensure this path matches the one you are pushing.
+              // Your screenshot shows '/auditor-cashback'. If that's what you are
+              // using to navigate, change the line below to: path: '/auditor-cashback',
               path: '/auditor-cashback-application',
-              builder: (_, __) => const AuditorCashbackApplicationScreen(),
+              builder: (_, __) {
+                final user = SessionService.instance.currentUser;
+                final userId = int.tryParse(user?.id ?? '');
+
+                if (userId == null) {
+                  return const UnauthorizedScreen();
+                }
+
+                return AuditorCashbackApplicationScreen(userId: userId);
+              },
             ),
           ]),
-           StatefulShellBranch(routes: [
+          StatefulShellBranch(observers: [
+            ShellNavigationObserver()
+          ], routes: [
             GoRoute(
               path: '/auditor-cashback',
-              builder: (_, __) => const AuditorCashbackScreen(),
+              builder: (_, __) {
+                final user = SessionService.instance.currentUser;
+                // auditor/ledger.php only filters by user when `user_id` is
+                // sent; with it omitted the reply carries every account's
+                // transactions, names and customer ids. An auditor audits the
+                // whole platform, so they get the unfiltered view — a
+                // customer must only ever see their own rows.
+                final scopedId = user?.role == UserRole.customer
+                    ? int.tryParse(user?.id ?? '')
+                    : null;
+                return AuditorCashbackScreen(userId: scopedId);
+              },
             ),
           ]),
-          StatefulShellBranch(routes: [
+          StatefulShellBranch(observers: [
+            ShellNavigationObserver()
+          ], routes: [
+            GoRoute(
+              path: AppRoutes.customerCashback,
+              builder: (_, __) {
+                final user = SessionService.instance.currentUser;
+                return user?.role == UserRole.customer
+                    ? const CustomerCashbackScreen()
+                    : const UnauthorizedScreen();
+              },
+            ),
+          ]),
+          StatefulShellBranch(observers: [
+            ShellNavigationObserver()
+          ], routes: [
             GoRoute(
               path: '/auditor-request',
               builder: (_, __) => const AuditorRequestScreen(),
             ),
           ]),
-          StatefulShellBranch(routes: [
+          StatefulShellBranch(observers: [
+            ShellNavigationObserver()
+          ], routes: [
             GoRoute(
               path: '/auditor-buy',
               builder: (_, __) => const AuditorBuyScreen(),
+              routes: [
+                GoRoute(
+                  path: 'cart',
+                  builder: (_, __) => CartService.isAvailableFor(
+                          SessionService.instance.currentUser?.role)
+                      ? const AuditorCartScreen()
+                      : const UnauthorizedScreen(),
+                ),
+              ],
             ),
           ]),
-
-
-
-
-
-
-
-
 
           // ============================================================
           // ADVOCATE SECTION
           // ============================================================
-           StatefulShellBranch(routes: [
+          StatefulShellBranch(observers: [
+            ShellNavigationObserver()
+          ], routes: [
             GoRoute(
               path: '/purchase-verification',
               builder: (_, __) => const PurchaseVerificationPage(),
             ),
           ]),
-          StatefulShellBranch(routes: [
+          StatefulShellBranch(observers: [
+            ShellNavigationObserver()
+          ], routes: [
             GoRoute(
               path: '/agreements',
               builder: (_, __) => const AgreementsScreen(),
             ),
           ]),
-        
-
-
 
           // ============================================================
           // MANAGEMENT SECTION
           // ============================================================
-          StatefulShellBranch(routes: [
+          StatefulShellBranch(observers: [
+            ShellNavigationObserver()
+          ], routes: [
             GoRoute(
               path: '/dashboard',
               builder: (_, __) {
@@ -246,28 +360,40 @@ class AppRouter {
                     return const ManagerDashboardScreen();
                   case UserRole.advocate:
                     return const AdvocatorDashboardScreen();
-                    case UserRole.auditor:
+                  case UserRole.auditor:
                     return const AuditorDashboardScreen();
+                  // Not AuditorDashboardScreen: that one reads
+                  // auditor/summary.php, which reports platform-wide revenue,
+                  // GST and wallet liability. Customers get the per-user
+                  // customer/dashboard.php instead.
+                  case UserRole.customer:
+                    return const CustomerDashboardScreen();
                   default:
                     return const DashboardScreen();
                 }
               },
             ),
           ]),
-          StatefulShellBranch(routes: [
+          StatefulShellBranch(observers: [
+            ShellNavigationObserver()
+          ], routes: [
             GoRoute(
               path: AppRoutes.profile,
               builder: (_, __) {
                 switch (SessionService.instance.currentUser?.role) {
                   case UserRole.advocate:
                     return const AdvocateProfileScreen();
+                  case UserRole.customer:
+                    return const CustomerProfileScreen();
                   default:
-                    return const ProfileScreen();
+                    return const ManagerProfileScreen();
                 }
               },
             ),
           ]),
-          StatefulShellBranch(routes: [
+          StatefulShellBranch(observers: [
+            ShellNavigationObserver()
+          ], routes: [
             GoRoute(
               path: AppRoutes.customers,
               builder: (_, __) {
@@ -280,13 +406,17 @@ class AppRouter {
               },
             ),
           ]),
-          StatefulShellBranch(routes: [
+          StatefulShellBranch(observers: [
+            ShellNavigationObserver()
+          ], routes: [
             GoRoute(
               path: AppRoutes.support,
               builder: (_, __) => const SupportScreen(),
             ),
           ]),
-          StatefulShellBranch(routes: [
+          StatefulShellBranch(observers: [
+            ShellNavigationObserver()
+          ], routes: [
             GoRoute(
               path: AppRoutes.archive,
               builder: (_, __) {
@@ -297,81 +427,192 @@ class AppRouter {
                     return const ArchiveScreen();
                 }
               },
+              routes: [
+                GoRoute(
+                  path: 'agreement',
+                  // Shares the archive's permission; a missing/invalid id
+                  // (e.g. a hand-typed URL) falls back to the list.
+                  redirect: (_, state) {
+                    final role = SessionService.instance.currentUser?.role;
+                    if (role == null ||
+                        !PermissionService.canAccess(AppRoutes.archive, role)) {
+                      return AppRoutes.unauthorized;
+                    }
+                    return int.tryParse(
+                                state.uri.queryParameters['id'] ?? '') ==
+                            null
+                        ? AppRoutes.archive
+                        : null;
+                  },
+                  // The tapped row rides along as `extra` for an instant
+                  // first paint; the screen re-reads it from the backend,
+                  // which also covers a browser refresh (extra is dropped).
+                  builder: (_, state) => AgreementVerificationScreen(
+                    agreementId: int.parse(state.uri.queryParameters['id']!),
+                    initial: state.extra is AgreementArchiveItem
+                        ? state.extra as AgreementArchiveItem
+                        : null,
+                  ),
+                ),
+              ],
             ),
           ]),
-          StatefulShellBranch(routes: [
+          StatefulShellBranch(observers: [
+            ShellNavigationObserver()
+          ], routes: [
             GoRoute(
               path: AppRoutes.disputes,
               builder: (_, __) => const DisputesScreen(),
             ),
           ]),
-          StatefulShellBranch(routes: [
+          StatefulShellBranch(observers: [
+            ShellNavigationObserver()
+          ], routes: [
             GoRoute(
               path: AppRoutes.rules,
               builder: (_, __) => const RulesScreen(),
             ),
           ]),
-          StatefulShellBranch(routes: [
+          StatefulShellBranch(observers: [
+            ShellNavigationObserver()
+          ], routes: [
             GoRoute(
               path: '/purchases',
               builder: (_, __) => const InvestmentsScreen(),
             ),
           ]),
-          StatefulShellBranch(routes: [
+          StatefulShellBranch(observers: [
+            ShellNavigationObserver()
+          ], routes: [
             GoRoute(
               path: '/purchase-history',
               builder: (_, __) => const InvestmentHistoryScreen(),
             ),
           ]),
-          StatefulShellBranch(routes: [
+          StatefulShellBranch(observers: [
+            ShellNavigationObserver()
+          ], routes: [
             GoRoute(
               path: '/gstr',
               builder: (_, __) => const GstrFilingScreen(),
             ),
           ]),
-          StatefulShellBranch(routes: [
+          StatefulShellBranch(observers: [
+            ShellNavigationObserver()
+          ], routes: [
             GoRoute(
               path: '/invoices',
               builder: (_, __) => const InvoicesScreen(),
             ),
           ]),
-          StatefulShellBranch(routes: [
+          StatefulShellBranch(observers: [
+            ShellNavigationObserver()
+          ], routes: [
             GoRoute(
               path: '/asset-inventory',
               builder: (_, __) => const AssetInventoryScreen(),
+              routes: [
+                GoRoute(
+                  path: 'new',
+                  builder: (_, __) => _canManageAssets()
+                      ? const AssetFormScreen()
+                      : const UnauthorizedScreen(),
+                ),
+                GoRoute(
+                  path: 'edit',
+                  // The asset travels as `extra`, which a browser refresh drops.
+                  redirect: (_, state) =>
+                      state.extra is Asset ? null : '/asset-inventory',
+                  builder: (_, state) => _canManageAssets()
+                      ? AssetFormScreen(asset: state.extra as Asset)
+                      : const UnauthorizedScreen(),
+                ),
+                GoRoute(
+                  path: 'history',
+                  redirect: (_, state) =>
+                      int.tryParse(state.uri.queryParameters['id'] ?? '') ==
+                              null
+                          ? '/asset-inventory'
+                          : null,
+                  builder: (_, state) => _canManageAssets()
+                      ? AssetMovementHistoryScreen(
+                          productId:
+                              int.parse(state.uri.queryParameters['id']!),
+                          productName: state.uri.queryParameters['name'] ?? '',
+                        )
+                      : const UnauthorizedScreen(),
+                ),
+              ],
             ),
           ]),
-          StatefulShellBranch(routes: [
+          StatefulShellBranch(observers: [
+            ShellNavigationObserver()
+          ], routes: [
             GoRoute(
               path: '/product-requests',
               builder: (_, __) => const ProductRequestsScreen(),
             ),
           ]),
-           StatefulShellBranch(routes: [
+          StatefulShellBranch(observers: [
+            ShellNavigationObserver()
+          ], routes: [
             GoRoute(
               path: '/product-requests-manager',
               builder: (_, __) => const ProductRequestsScreenManager(),
             ),
           ]),
-          StatefulShellBranch(routes: [
+          StatefulShellBranch(observers: [
+            ShellNavigationObserver()
+          ], routes: [
             GoRoute(
               path: '/cashback-applications',
               builder: (_, __) => const CashbackApplicationsScreen(),
             ),
           ]),
-          StatefulShellBranch(routes: [
+          StatefulShellBranch(observers: [
+            ShellNavigationObserver()
+          ], routes: [
             GoRoute(
               path: '/cashback-Monitoring',
               builder: (_, __) => const CashbackMonitoringScreen(),
             ),
           ]),
-          StatefulShellBranch(routes: [
+          StatefulShellBranch(observers: [
+            ShellNavigationObserver()
+          ], routes: [
             GoRoute(
               path: '/users',
               builder: (_, __) => const UsersDirectoryScreen(),
+              routes: [
+                GoRoute(
+                  path: 'profile',
+                  // Child routes aren't role-gated by the menu, so reuse the
+                  // directory's own permission check.
+                  redirect: (_, state) {
+                    final role = SessionService.instance.currentUser?.role;
+                    if (role == null ||
+                        !PermissionService.canAccess('/users', role)) {
+                      return AppRoutes.unauthorized;
+                    }
+                    return int.tryParse(
+                                state.uri.queryParameters['id'] ?? '') ==
+                            null
+                        ? '/users'
+                        : null;
+                  },
+                  builder: (_, state) => UserProfileScreen(
+                    userId: int.parse(state.uri.queryParameters['id']!),
+                    initialUser: state.extra is AdminUserModel
+                        ? state.extra as AdminUserModel
+                        : null,
+                  ),
+                ),
+              ],
             ),
           ]),
-          StatefulShellBranch(routes: [
+          StatefulShellBranch(observers: [
+            ShellNavigationObserver()
+          ], routes: [
             GoRoute(
               path: '/genealogy',
               builder: (_, __) => const GenealogyExplorerScreen(),
@@ -381,181 +622,227 @@ class AppRouter {
           // ============================================================
           // OPERATIONS SECTION
           // ============================================================
-          StatefulShellBranch(routes: [
+          StatefulShellBranch(observers: [
+            ShellNavigationObserver()
+          ], routes: [
             GoRoute(
               path: '/wallets',
               builder: (_, __) => const WalletListScreen(),
             ),
           ]),
-          StatefulShellBranch(routes: [
+          StatefulShellBranch(observers: [
+            ShellNavigationObserver()
+          ], routes: [
             GoRoute(
               path: '/cashback-payouts',
               builder: (_, __) => const YieldDisbursementsScreen(),
             ),
           ]),
-          StatefulShellBranch(routes: [
+          StatefulShellBranch(observers: [
+            ShellNavigationObserver()
+          ], routes: [
             GoRoute(
               path: '/export-payout-excel',
               builder: (_, __) => const ExportPayoutsScreen(),
             ),
           ]),
-          StatefulShellBranch(routes: [
+          StatefulShellBranch(observers: [
+            ShellNavigationObserver()
+          ], routes: [
             GoRoute(
               path: '/payout-reconciliation',
               builder: (_, __) => const PayoutReconciliationScreen(),
             ),
           ]),
 
-          StatefulShellBranch(routes: [
+          StatefulShellBranch(observers: [
+            ShellNavigationObserver()
+          ], routes: [
             GoRoute(
               path: '/wallet-payout-reports',
               builder: (_, __) => const WalletPayoutReportsScreen(),
             ),
           ]),
-          StatefulShellBranch(routes: [
+          StatefulShellBranch(observers: [
+            ShellNavigationObserver()
+          ], routes: [
             GoRoute(
               path: '/wallet-adjustment',
               builder: (_, __) => const WalletAdjustmentScreen(),
             ),
           ]),
-          StatefulShellBranch(routes: [
+          StatefulShellBranch(observers: [
+            ShellNavigationObserver()
+          ], routes: [
             GoRoute(
               path: '/tally-export',
               builder: (_, __) => const TallyExportScreen(),
             ),
           ]),
-          StatefulShellBranch(routes: [
+          StatefulShellBranch(observers: [
+            ShellNavigationObserver()
+          ], routes: [
             GoRoute(
               path: '/tally-integration',
               builder: (_, __) => const TallyIntegrationScreen(),
             ),
           ]),
-          StatefulShellBranch(routes: [
+          StatefulShellBranch(observers: [
+            ShellNavigationObserver()
+          ], routes: [
             GoRoute(
               path: '/kyc',
               builder: (_, __) => const KycRegistryScreen(),
             ),
           ]),
-          StatefulShellBranch(routes: [
+          StatefulShellBranch(observers: [
+            ShellNavigationObserver()
+          ], routes: [
             GoRoute(
               path: '/identity-verification',
               builder: (_, __) => const IdentityVerificationScreen(),
             ),
           ]),
-          StatefulShellBranch(routes: [
+          StatefulShellBranch(observers: [
+            ShellNavigationObserver()
+          ], routes: [
             GoRoute(
               path: '/market-rates',
               builder: (_, __) => const MarketRatesScreen(),
             ),
           ]),
-          StatefulShellBranch(routes: [
+          StatefulShellBranch(observers: [
+            ShellNavigationObserver()
+          ], routes: [
             GoRoute(
               path: '/withdrawals',
               builder: (_, __) => const WithdrawalsScreen(),
             ),
           ]),
-          StatefulShellBranch(routes: [
+          StatefulShellBranch(observers: [
+            ShellNavigationObserver()
+          ], routes: [
             GoRoute(
               path: '/withdrawals-liquidity',
               builder: (_, __) => const WithdrawLiquidityScreen(),
             ),
           ]),
-          StatefulShellBranch(routes: [
+          StatefulShellBranch(observers: [
+            ShellNavigationObserver()
+          ], routes: [
             GoRoute(
               path: '/notifications',
               builder: (_, __) => const NotificationHubScreen(),
             ),
           ]),
 
-          StatefulShellBranch(routes: [
+          StatefulShellBranch(observers: [
+            ShellNavigationObserver()
+          ], routes: [
             GoRoute(
               path: '/reports',
               builder: (_, __) => const PayoutReportsScreen(),
             ),
           ]),
 
-
-
           // ============================================================
           // REPORTS SECTION
           // ============================================================
-          StatefulShellBranch(routes: [
+          StatefulShellBranch(observers: [
+            ShellNavigationObserver()
+          ], routes: [
             GoRoute(
               path: '/cashback-reports',
-              builder: (_, __) =>
-                  const CashbackReportsScreen(),
+              builder: (_, __) => const CashbackReportsScreen(),
             ),
           ]),
-          StatefulShellBranch(routes: [
+          StatefulShellBranch(observers: [
+            ShellNavigationObserver()
+          ], routes: [
             GoRoute(
               path: '/withdrawal-reports',
-              builder: (_, __) =>
-                  const WithdrawalReportsScreen(),
+              builder: (_, __) => const WithdrawalReportsScreen(),
             ),
           ]),
-          StatefulShellBranch(routes: [
+          StatefulShellBranch(observers: [
+            ShellNavigationObserver()
+          ], routes: [
             GoRoute(
               path: '/transaction-reports',
-              builder: (_, __) =>
-                  const TransactionReportsScreen(),
+              builder: (_, __) => const TransactionReportsScreen(),
             ),
           ]),
-          StatefulShellBranch(routes: [
+          StatefulShellBranch(observers: [
+            ShellNavigationObserver()
+          ], routes: [
             GoRoute(
               path: '/investment-reports',
-              builder: (_, __) =>
-                  const InvestmentReportsScreen(),
+              builder: (_, __) => const InvestmentReportsScreen(),
             ),
           ]),
-          StatefulShellBranch(routes: [
+          StatefulShellBranch(observers: [
+            ShellNavigationObserver()
+          ], routes: [
             GoRoute(
               path: '/referral-reports',
-              builder: (_, __) =>
-                  const ReferralReportsScreen(),
+              builder: (_, __) => const ReferralReportsScreen(),
             ),
           ]),
-          StatefulShellBranch(routes: [
+          StatefulShellBranch(observers: [
+            ShellNavigationObserver()
+          ], routes: [
             GoRoute(
               path: '/payout-reports',
-              builder: (_, __) =>
-                  const PayoutReportsScreen(),
+              builder: (_, __) => const PayoutReportsScreen(),
             ),
           ]),
 
           // ============================================================
           // SYSTEM SECTION
           // ============================================================
-          StatefulShellBranch(routes: [
+          StatefulShellBranch(observers: [
+            ShellNavigationObserver()
+          ], routes: [
             GoRoute(
               path: '/holiday-calendar',
               builder: (_, __) => const HolidaysScreen(),
             ),
           ]),
-          StatefulShellBranch(routes: [
+          StatefulShellBranch(observers: [
+            ShellNavigationObserver()
+          ], routes: [
             GoRoute(
               path: '/feedback',
               builder: (_, __) => const FeedbackRemarksScreen(),
             ),
           ]),
-          StatefulShellBranch(routes: [
+          StatefulShellBranch(observers: [
+            ShellNavigationObserver()
+          ], routes: [
             GoRoute(
               path: '/offers',
               builder: (_, __) => const OffersScreen(),
             ),
           ]),
-          StatefulShellBranch(routes: [
+          StatefulShellBranch(observers: [
+            ShellNavigationObserver()
+          ], routes: [
             GoRoute(
               path: '/add-staff',
               builder: (_, __) => const RecruitmentScreen(),
             ),
           ]),
-          StatefulShellBranch(routes: [
+          StatefulShellBranch(observers: [
+            ShellNavigationObserver()
+          ], routes: [
             GoRoute(
               path: '/add-staff-manager',
               builder: (_, __) => const StaffInfrastructureScreen(),
             ),
           ]),
-          StatefulShellBranch(routes: [
+          StatefulShellBranch(observers: [
+            ShellNavigationObserver()
+          ], routes: [
             GoRoute(
               path: AppRoutes.settings,
               builder: (_, __) => const SystemSettingsScreen(),
@@ -567,6 +854,10 @@ class AppRouter {
     errorBuilder: (_, __) => const NotFoundScreen(),
   );
 
+  /// Sub-pages of `/asset-inventory` share its permission.
+  static bool _canManageAssets() => PermissionService.canAccess(
+      '/asset-inventory', SessionService.instance.currentUser!.role);
+
   static String? _redirect(BuildContext context, GoRouterState state) {
     final loggedIn = SessionService.instance.isLoggedIn;
     final path = state.matchedLocation;
@@ -574,9 +865,9 @@ class AppRouter {
     if (path == AppRoutes.splash) return null;
 
     final isPublic = path == AppRoutes.login ||
-      path == AppRoutes.recoverKey ||
-      path == AppRoutes.register ||
-      path == AppRoutes.unauthorized;
+        path == AppRoutes.recoverKey ||
+        path == AppRoutes.register ||
+        path == AppRoutes.unauthorized;
 
     if (!loggedIn) {
       return isPublic ? null : AppRoutes.login;

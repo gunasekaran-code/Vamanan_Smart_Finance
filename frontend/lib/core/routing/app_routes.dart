@@ -59,14 +59,42 @@ class AppRoutes {
   static const String support = '/support';
   static const String agreements = '/agreements';
   static const String archive = '/archive';
+  static const String agreementVerification = '/archive/agreement';
+  static String agreementVerificationFor(int id) =>
+      Uri(path: agreementVerification, queryParameters: {'id': '$id'})
+          .toString();
   static const String disputes = '/disputes';
   static const String rules = '/rules';
 
-
   static const String auditorBuy = '/auditor-buy';
-  static const String auditorCashback = '/auditor-cashback';
-  static const String auditorKyc = '/auditor-kyc';
 
+  /// The customer's cart — a child of [auditorBuy], so it opens inside the
+  /// app shell with BUY highlighted in the bottom nav.
+  static const String cart = '/auditor-buy/cart';
+
+  /// Stock movement history for one product — a child of `/asset-inventory`,
+  /// so it opens inside the app shell with a back button in the header.
+  static const String assetMovementHistory = '/asset-inventory/history';
+
+  /// Asset create / edit form — children of `/asset-inventory`, so they open
+  /// inside the app shell with a back button in the header. Edit takes the
+  /// [Asset] being edited as the route's `extra`.
+  static const String assetNew = '/asset-inventory/new';
+  static const String assetEdit = '/asset-inventory/edit';
+  static String assetMovementHistoryFor(
+          {required int id, required String name}) =>
+      Uri(
+          path: assetMovementHistory,
+          queryParameters: {'id': '$id', 'name': name}).toString();
+
+  /// One user's full profile — a child of `/users`, so it opens inside the
+  /// app shell with a back button in the header.
+  static const String userProfile = '/users/profile';
+  static String userProfileFor(int id) =>
+      Uri(path: userProfile, queryParameters: {'id': '$id'}).toString();
+  static const String auditorCashback = '/auditor-cashback';
+  static const String customerCashback = '/customer-cashback';
+  static const String auditorKyc = '/auditor-kyc';
 
   /// The route paths of every `StatefulShellBranch` in `AppRouter.router`,
   /// in the exact order they're declared there. A branch's index in this
@@ -89,6 +117,7 @@ class AppRoutes {
     '/auditor-referral',
     '/auditor-cashback-application',
     auditorCashback,
+    customerCashback,
     '/auditor-request',
     auditorBuy,
     // ADVOCATE SECTION

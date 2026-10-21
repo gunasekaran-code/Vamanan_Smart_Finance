@@ -1,8 +1,11 @@
 import 'package:flutter/material.dart';
-import 'package:frontend/core/theme/app_theme.dart';
 import 'package:frontend/core/theme/confirm_dialog.dart';
+import 'package:frontend/core/services/session_service.dart';
 import 'package:frontend/shared/widgets/app_page.dart';
 import 'package:frontend/shared/widgets/app_toast.dart';
+import '../../models/advocate_profile_model.dart';
+import '../../services/advocate_profile_service.dart';
+import 'package:frontend/shared/widgets/app_loader.dart';
 
 class AdvocateProfileScreen extends StatefulWidget {
   const AdvocateProfileScreen({super.key});
@@ -14,19 +17,27 @@ class AdvocateProfileScreen extends StatefulWidget {
 class _AdvocateProfileScreenState extends State<AdvocateProfileScreen> {
   // State variables
   String _activeTab = 'IDENTITY'; // 'IDENTITY' or 'SECURITY'
-  
+
   // Security State
   bool _isChangingNode = false;
   bool _obscureNew = true;
   bool _obscureConfirm = true;
+  bool _isSavingSecurity = false;
+  final TextEditingController _newPasswordCtrl = TextEditingController();
+  final TextEditingController _confirmPasswordCtrl = TextEditingController();
 
   // Identity State
   bool _isEditingIdentity = false;
+  bool _isSavingIdentity = false;
   late TextEditingController _phoneCtrl;
   late TextEditingController _bioCtrl;
 
+  // Profile loading state
+  late Future<AdvocateProfile> _profileFuture;
+  AdvocateProfile? _profile;
+
   // Exact colors from your design
-  final Color _navyBlue = const Color(0xFF1E3376); 
+  final Color _navyBlue = const Color(0xFF1E3376);
   final Color _goldAccent = const Color(0xFFDCA743);
   final Color _lightGoldBg = const Color(0xFFFFFBEB);
   final Color _slateText = const Color(0xFF94A3B8);
@@ -35,16 +46,40 @@ class _AdvocateProfileScreenState extends State<AdvocateProfileScreen> {
   void initState() {
     super.initState();
     _phoneCtrl = TextEditingController();
-    _bioCtrl = TextEditingController(
-      text: 'Certified institutional advocate overseeing decentralized capital nodes for Vamanan Enterprises. Specialized in protocol ratification and institutional integrity monitoring.'
-    );
+    _bioCtrl = TextEditingController();
+    _profileFuture = _loadProfile();
   }
 
   @override
   void dispose() {
     _phoneCtrl.dispose();
     _bioCtrl.dispose();
+    _newPasswordCtrl.dispose();
+    _confirmPasswordCtrl.dispose();
     super.dispose();
+  }
+
+  Future<AdvocateProfile> _loadProfile() async {
+    final user = SessionService.instance.currentUser;
+    final userId = int.tryParse(user?.id ?? '');
+    if (userId == null) {
+      throw AdvocateProfileException(
+          'No logged-in advocate session was found. Please sign in again.');
+    }
+    final profile = await AdvocateProfileService.fetchProfile(userId);
+    _profile = profile;
+    _phoneCtrl.text = profile.phone ?? user?.phone ?? '';
+    _bioCtrl.text = profile.bio ??
+        'Certified institutional advocate overseeing decentralized capital nodes for Vamanan Enterprises. Specialized in protocol ratification and institutional integrity monitoring.';
+    return profile;
+  }
+
+  Future<void> _refresh() async {
+    final future = _loadProfile();
+    setState(() {
+      _profileFuture = future;
+    });
+    await future;
   }
 
   // --- ACTIONS ---
@@ -58,41 +93,103 @@ class _AdvocateProfileScreenState extends State<AdvocateProfileScreen> {
     final confirmed = await AppConfirmDialog.show(
       context: context,
       title: 'Update Identity Node',
-      message: 'Are you sure you want to commit these changes to your public identity protocol?',
+      message:
+          'Are you sure you want to commit these changes to your public identity protocol?',
       confirmLabel: 'Save Changes',
       confirmButtonColor: _navyBlue,
     );
 
-    if (confirmed == true) {
+    if (confirmed != true || _profile == null) return;
+
+    setState(() => _isSavingIdentity = true);
+    try {
+      await AdvocateProfileService.updateIdentity(
+        userId: _profile!.id,
+        name: _profile!.name,
+        email: _profile!.email,
+        phone: _phoneCtrl.text.trim(),
+        bio: _bioCtrl.text.trim(),
+      );
+      final currentUser = SessionService.instance.currentUser;
+      if (currentUser != null) {
+        await SessionService.instance.updateCurrentUser(
+          currentUser.copyWith(phone: _phoneCtrl.text.trim()),
+        );
+      }
       setState(() {
+        _profile = _profile!
+            .copyWith(phone: _phoneCtrl.text.trim(), bio: _bioCtrl.text.trim());
         _isEditingIdentity = false;
       });
+      if (!mounted) return;
       ToastService.show(
         title: 'Identity Updated',
         message: 'Your public identity protocol has been successfully updated.',
         type: ToastType.success,
       );
+    } catch (e) {
+      if (!mounted) return;
+      ToastService.show(
+        title: 'Update Failed',
+        message: e.toString(),
+        type: ToastType.error,
+      );
+    } finally {
+      if (mounted) setState(() => _isSavingIdentity = false);
     }
   }
 
   Future<void> _handleUpdateSecurity() async {
+    if (_newPasswordCtrl.text.isEmpty ||
+        _newPasswordCtrl.text != _confirmPasswordCtrl.text) {
+      ToastService.show(
+        title: 'Check Password Fields',
+        message:
+            'New password and confirmation must match and cannot be empty.',
+        type: ToastType.error,
+      );
+      return;
+    }
+
     final confirmed = await AppConfirmDialog.show(
       context: context,
       title: 'Update Credentials',
-      message: 'Are you sure you want to update your institutional access node? You will be required to use the new protocol key immediately.',
+      message:
+          'Are you sure you want to update your institutional access node? You will be required to use the new protocol key immediately.',
       confirmLabel: 'Update Protocol',
       confirmButtonColor: _navyBlue,
     );
 
-    if (confirmed == true) {
+    if (confirmed != true || _profile == null) return;
+
+    setState(() => _isSavingSecurity = true);
+    try {
+      await AdvocateProfileService.updateSecurity(
+        userId: _profile!.id,
+        newPassword: _newPasswordCtrl.text,
+        confirmPassword: _confirmPasswordCtrl.text,
+      );
       setState(() {
         _isChangingNode = false;
+        _newPasswordCtrl.clear();
+        _confirmPasswordCtrl.clear();
       });
+      if (!mounted) return;
       ToastService.show(
         title: 'Security Updated',
-        message: 'Your institutional access node has been successfully updated.',
+        message:
+            'Your institutional access node has been successfully updated.',
         type: ToastType.success,
       );
+    } catch (e) {
+      if (!mounted) return;
+      ToastService.show(
+        title: 'Update Failed',
+        message: e.toString(),
+        type: ToastType.error,
+      );
+    } finally {
+      if (mounted) setState(() => _isSavingSecurity = false);
     }
   }
 
@@ -101,97 +198,133 @@ class _AdvocateProfileScreenState extends State<AdvocateProfileScreen> {
     return AppPage(
       title: null,
       children: [
-        LayoutBuilder(
-          builder: (context, constraints) {
-            final isMobile = constraints.maxWidth < 800;
-
-            if (isMobile) {
-              // Mobile Layout: Stacked
-              return Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  _buildProfileHeaderCard(),
-                  const SizedBox(height: 24),
-                  _buildTabButton(
-                    title: 'IDENTITY PROTOCOL',
-                    subtitle: 'MANAGE PUBLIC INFO',
-                    icon: Icons.person_outline,
-                    isActive: _activeTab == 'IDENTITY',
-                    onTap: () => setState(() {
-                      _activeTab = 'IDENTITY';
-                      _isChangingNode = false;
-                    }),
-                  ),
-                  const SizedBox(height: 16),
-                  _buildTabButton(
-                    title: 'SECURITY HUB',
-                    subtitle: 'UPDATE CREDENTIALS',
-                    icon: Icons.lock_outline,
-                    isActive: _activeTab == 'SECURITY',
-                    onTap: () => setState(() {
-                      _activeTab = 'SECURITY';
-                      _isEditingIdentity = false;
-                    }),
-                  ),
-                  const SizedBox(height: 32),
-                  AnimatedSwitcher(
-                    duration: const Duration(milliseconds: 300),
-                    child: _activeTab == 'IDENTITY' 
-                        ? _buildIdentityContainer() 
-                        : _buildSecurityHub(),
-                  ),
-                ],
-              );
-            } else {
-              // Desktop/Tablet Layout: Side-by-Side
-              return Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  // Left Column: Profile & Tabs
-                  Expanded(
-                    flex: 4,
-                    child: Column(
-                      children: [
-                        _buildProfileHeaderCard(),
-                        const SizedBox(height: 24),
-                        _buildTabButton(
-                          title: 'IDENTITY PROTOCOL',
-                          subtitle: 'MANAGE PUBLIC INFO',
-                          icon: Icons.person_outline,
-                          isActive: _activeTab == 'IDENTITY',
-                          onTap: () => setState(() {
-                            _activeTab = 'IDENTITY';
-                            _isChangingNode = false;
-                          }),
-                        ),
-                        const SizedBox(height: 16),
-                        _buildTabButton(
-                          title: 'SECURITY HUB',
-                          subtitle: 'UPDATE CREDENTIALS',
-                          icon: Icons.lock_outline,
-                          isActive: _activeTab == 'SECURITY',
-                          onTap: () => setState(() {
-                            _activeTab = 'SECURITY';
-                            _isEditingIdentity = false;
-                          }),
-                        ),
-                      ],
-                    ),
-                  ),
-                  const SizedBox(width: 32),
-                  // Right Column: Dynamic Content
-                  Expanded(
-                    flex: 7,
-                    child: AnimatedSwitcher(
-                      duration: const Duration(milliseconds: 300),
-                      child: _activeTab == 'IDENTITY' 
-                          ? _buildIdentityContainer() 
-                          : _buildSecurityHub(),
-                    ),
-                  ),
-                ],
+        FutureBuilder<AdvocateProfile>(
+          future: _profileFuture,
+          builder: (context, snapshot) {
+            if (snapshot.connectionState == ConnectionState.waiting) {
+              return const Padding(
+                padding: EdgeInsets.symmetric(vertical: 100),
+                child: Center(child: AppLoader()),
               );
             }
+
+            if (snapshot.hasError) {
+              return Padding(
+                padding:
+                    const EdgeInsets.symmetric(vertical: 80, horizontal: 32),
+                child: Column(
+                  children: [
+                    const Icon(Icons.error_outline,
+                        color: Color(0xFF94A3B8), size: 32),
+                    const SizedBox(height: 12),
+                    Text(
+                      'Could not load profile.\n${snapshot.error}',
+                      textAlign: TextAlign.center,
+                      style: const TextStyle(
+                          color: Color(0xFF94A3B8), fontSize: 12),
+                    ),
+                    const SizedBox(height: 16),
+                    TextButton(onPressed: _refresh, child: const Text('RETRY')),
+                  ],
+                ),
+              );
+            }
+
+            final profile = snapshot.data!;
+
+            return LayoutBuilder(
+              builder: (context, constraints) {
+                final isMobile = constraints.maxWidth < 800;
+
+                if (isMobile) {
+                  // Mobile Layout: Stacked
+                  return Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      _buildProfileHeaderCard(profile),
+                      const SizedBox(height: 24),
+                      _buildTabButton(
+                        title: 'IDENTITY PROTOCOL',
+                        subtitle: 'MANAGE PUBLIC INFO',
+                        icon: Icons.person_outline,
+                        isActive: _activeTab == 'IDENTITY',
+                        onTap: () => setState(() {
+                          _activeTab = 'IDENTITY';
+                          _isChangingNode = false;
+                        }),
+                      ),
+                      const SizedBox(height: 16),
+                      _buildTabButton(
+                        title: 'SECURITY HUB',
+                        subtitle: 'UPDATE CREDENTIALS',
+                        icon: Icons.lock_outline,
+                        isActive: _activeTab == 'SECURITY',
+                        onTap: () => setState(() {
+                          _activeTab = 'SECURITY';
+                          _isEditingIdentity = false;
+                        }),
+                      ),
+                      const SizedBox(height: 32),
+                      AnimatedSwitcher(
+                        duration: const Duration(milliseconds: 300),
+                        child: _activeTab == 'IDENTITY'
+                            ? _buildIdentityContainer(profile)
+                            : _buildSecurityHub(),
+                      ),
+                    ],
+                  );
+                } else {
+                  // Desktop/Tablet Layout: Side-by-Side
+                  return Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      // Left Column: Profile & Tabs
+                      Expanded(
+                        flex: 4,
+                        child: Column(
+                          children: [
+                            _buildProfileHeaderCard(profile),
+                            const SizedBox(height: 24),
+                            _buildTabButton(
+                              title: 'IDENTITY PROTOCOL',
+                              subtitle: 'MANAGE PUBLIC INFO',
+                              icon: Icons.person_outline,
+                              isActive: _activeTab == 'IDENTITY',
+                              onTap: () => setState(() {
+                                _activeTab = 'IDENTITY';
+                                _isChangingNode = false;
+                              }),
+                            ),
+                            const SizedBox(height: 16),
+                            _buildTabButton(
+                              title: 'SECURITY HUB',
+                              subtitle: 'UPDATE CREDENTIALS',
+                              icon: Icons.lock_outline,
+                              isActive: _activeTab == 'SECURITY',
+                              onTap: () => setState(() {
+                                _activeTab = 'SECURITY';
+                                _isEditingIdentity = false;
+                              }),
+                            ),
+                          ],
+                        ),
+                      ),
+                      const SizedBox(width: 32),
+                      // Right Column: Dynamic Content
+                      Expanded(
+                        flex: 7,
+                        child: AnimatedSwitcher(
+                          duration: const Duration(milliseconds: 300),
+                          child: _activeTab == 'IDENTITY'
+                              ? _buildIdentityContainer(profile)
+                              : _buildSecurityHub(),
+                        ),
+                      ),
+                    ],
+                  );
+                }
+              },
+            );
           },
         ),
       ],
@@ -203,14 +336,17 @@ class _AdvocateProfileScreenState extends State<AdvocateProfileScreen> {
   // ==========================================================================
 
   // 1. Top Profile Header Card
-  Widget _buildProfileHeaderCard() {
+  Widget _buildProfileHeaderCard(AdvocateProfile profile) {
     return Container(
       padding: const EdgeInsets.all(40),
       decoration: BoxDecoration(
         color: Colors.white,
         borderRadius: BorderRadius.circular(40),
         boxShadow: [
-          BoxShadow(color: Colors.black.withOpacity(0.02), blurRadius: 30, offset: const Offset(0, 10))
+          BoxShadow(
+              color: Colors.black.withOpacity(0.02),
+              blurRadius: 30,
+              offset: const Offset(0, 10))
         ],
       ),
       child: Column(
@@ -222,19 +358,31 @@ class _AdvocateProfileScreenState extends State<AdvocateProfileScreen> {
               color: Colors.white,
               shape: BoxShape.circle,
               boxShadow: [
-                BoxShadow(color: Colors.black.withOpacity(0.1), blurRadius: 20, offset: const Offset(0, 8))
+                BoxShadow(
+                    color: Colors.black.withOpacity(0.1),
+                    blurRadius: 20,
+                    offset: const Offset(0, 8))
               ],
             ),
             alignment: Alignment.center,
             child: Text(
-              'V',
-              style: TextStyle(color: _navyBlue, fontSize: 36, fontWeight: FontWeight.w900, fontStyle: FontStyle.italic),
+              profile.name.isNotEmpty ? profile.name[0].toUpperCase() : 'V',
+              style: TextStyle(
+                  color: _navyBlue,
+                  fontSize: 36,
+                  fontWeight: FontWeight.w900,
+                  fontStyle: FontStyle.italic),
             ),
           ),
           const SizedBox(height: 24),
           Text(
-            'TEST ADVOCATE',
-            style: TextStyle(color: _navyBlue, fontSize: 24, fontWeight: FontWeight.w900, fontStyle: FontStyle.italic, letterSpacing: -0.5),
+            profile.name.toUpperCase(),
+            style: TextStyle(
+                color: _navyBlue,
+                fontSize: 24,
+                fontWeight: FontWeight.w900,
+                fontStyle: FontStyle.italic,
+                letterSpacing: -0.5),
           ),
           const SizedBox(height: 12),
           Container(
@@ -245,15 +393,26 @@ class _AdvocateProfileScreenState extends State<AdvocateProfileScreen> {
               border: Border.all(color: _goldAccent.withOpacity(0.3)),
             ),
             child: Text(
-              'LEAD ADVOCATE',
-              style: TextStyle(color: _goldAccent, fontSize: 10, fontWeight: FontWeight.w900, fontStyle: FontStyle.italic, letterSpacing: 1.0),
+              profile.role.isNotEmpty
+                  ? profile.role.toUpperCase()
+                  : 'LEAD ADVOCATE',
+              style: TextStyle(
+                  color: _goldAccent,
+                  fontSize: 10,
+                  fontWeight: FontWeight.w900,
+                  fontStyle: FontStyle.italic,
+                  letterSpacing: 1.0),
             ),
           ),
           const SizedBox(height: 20),
           Text(
             'Dedicated Legal Oversight • Vamanan Enterprises',
             textAlign: TextAlign.center,
-            style: TextStyle(color: _slateText, fontSize: 12, fontWeight: FontWeight.w800, fontStyle: FontStyle.italic),
+            style: TextStyle(
+                color: _slateText,
+                fontSize: 12,
+                fontWeight: FontWeight.w800,
+                fontStyle: FontStyle.italic),
           ),
         ],
       ),
@@ -261,7 +420,12 @@ class _AdvocateProfileScreenState extends State<AdvocateProfileScreen> {
   }
 
   // 2. Navigation Tab Buttons
-  Widget _buildTabButton({required String title, required String subtitle, required IconData icon, required bool isActive, required VoidCallback onTap}) {
+  Widget _buildTabButton(
+      {required String title,
+      required String subtitle,
+      required IconData icon,
+      required bool isActive,
+      required VoidCallback onTap}) {
     return GestureDetector(
       onTap: onTap,
       child: AnimatedContainer(
@@ -270,7 +434,19 @@ class _AdvocateProfileScreenState extends State<AdvocateProfileScreen> {
         decoration: BoxDecoration(
           color: isActive ? _navyBlue : Colors.white,
           borderRadius: BorderRadius.circular(32),
-          boxShadow: isActive ? [BoxShadow(color: _navyBlue.withOpacity(0.3), blurRadius: 20, offset: const Offset(0, 10))] : [BoxShadow(color: Colors.black.withOpacity(0.02), blurRadius: 10, offset: const Offset(0, 5))],
+          boxShadow: isActive
+              ? [
+                  BoxShadow(
+                      color: _navyBlue.withOpacity(0.3),
+                      blurRadius: 20,
+                      offset: const Offset(0, 10))
+                ]
+              : [
+                  BoxShadow(
+                      color: Colors.black.withOpacity(0.02),
+                      blurRadius: 10,
+                      offset: const Offset(0, 5))
+                ],
         ),
         child: Row(
           children: [
@@ -280,7 +456,8 @@ class _AdvocateProfileScreenState extends State<AdvocateProfileScreen> {
                 color: isActive ? _goldAccent : _lightGoldBg,
                 borderRadius: BorderRadius.circular(16),
               ),
-              child: Icon(icon, color: isActive ? Colors.white : _goldAccent, size: 20),
+              child: Icon(icon,
+                  color: isActive ? Colors.white : _goldAccent, size: 20),
             ),
             const SizedBox(width: 20),
             Expanded(
@@ -289,17 +466,28 @@ class _AdvocateProfileScreenState extends State<AdvocateProfileScreen> {
                 children: [
                   Text(
                     title,
-                    style: TextStyle(color: isActive ? Colors.white : _navyBlue, fontSize: 14, fontWeight: FontWeight.w900, fontStyle: FontStyle.italic, letterSpacing: 0.5),
+                    style: TextStyle(
+                        color: isActive ? Colors.white : _navyBlue,
+                        fontSize: 14,
+                        fontWeight: FontWeight.w900,
+                        fontStyle: FontStyle.italic,
+                        letterSpacing: 0.5),
                   ),
                   const SizedBox(height: 4),
                   Text(
                     subtitle,
-                    style: TextStyle(color: isActive ? Colors.white70 : _slateText, fontSize: 10, fontWeight: FontWeight.w900, fontStyle: FontStyle.italic, letterSpacing: 1.0),
+                    style: TextStyle(
+                        color: isActive ? Colors.white70 : _slateText,
+                        fontSize: 10,
+                        fontWeight: FontWeight.w900,
+                        fontStyle: FontStyle.italic,
+                        letterSpacing: 1.0),
                   ),
                 ],
               ),
             ),
-            Icon(Icons.chevron_right, color: isActive ? Colors.white54 : _slateText.withOpacity(0.3)),
+            Icon(Icons.chevron_right,
+                color: isActive ? Colors.white54 : _slateText.withOpacity(0.3)),
           ],
         ),
       ),
@@ -307,37 +495,63 @@ class _AdvocateProfileScreenState extends State<AdvocateProfileScreen> {
   }
 
   // 3. Identity State Switcher
-  Widget _buildIdentityContainer() {
+  Widget _buildIdentityContainer(AdvocateProfile profile) {
     return AnimatedSwitcher(
       duration: const Duration(milliseconds: 300),
-      child: _isEditingIdentity ? _buildIdentityEditMode() : _buildIdentityViewMode(),
+      child: _isEditingIdentity
+          ? _buildIdentityEditMode(profile)
+          : _buildIdentityViewMode(profile),
     );
   }
 
   // 3a. Identity Details (View Mode)
-  Widget _buildIdentityViewMode() {
+  Widget _buildIdentityViewMode(AdvocateProfile profile) {
     return Container(
       key: const ValueKey('IDENTITY_VIEW'),
       padding: const EdgeInsets.all(32),
-      decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(40), boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.02), blurRadius: 20, offset: const Offset(0, 10))]),
+      decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(40),
+          boxShadow: [
+            BoxShadow(
+                color: Colors.black.withOpacity(0.02),
+                blurRadius: 20,
+                offset: const Offset(0, 10))
+          ]),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              Text('IDENTITY DETAILS', style: TextStyle(color: _navyBlue, fontSize: 20, fontWeight: FontWeight.w900, fontStyle: FontStyle.italic, letterSpacing: -0.5)),
+              Text('IDENTITY DETAILS',
+                  style: TextStyle(
+                      color: _navyBlue,
+                      fontSize: 20,
+                      fontWeight: FontWeight.w900,
+                      fontStyle: FontStyle.italic,
+                      letterSpacing: -0.5)),
               InkWell(
                 onTap: _handleEditProfile,
                 borderRadius: BorderRadius.circular(20),
                 child: Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                  decoration: BoxDecoration(color: _lightGoldBg, borderRadius: BorderRadius.circular(20), border: Border.all(color: _goldAccent.withOpacity(0.3))),
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                  decoration: BoxDecoration(
+                      color: _lightGoldBg,
+                      borderRadius: BorderRadius.circular(20),
+                      border: Border.all(color: _goldAccent.withOpacity(0.3))),
                   child: Row(
                     children: [
                       Icon(Icons.edit_outlined, size: 12, color: _goldAccent),
                       const SizedBox(width: 6),
-                      Text('EDIT PROFILE', style: TextStyle(color: _goldAccent, fontSize: 10, fontWeight: FontWeight.w900, fontStyle: FontStyle.italic, letterSpacing: 1.0)),
+                      Text('EDIT PROFILE',
+                          style: TextStyle(
+                              color: _goldAccent,
+                              fontSize: 10,
+                              fontWeight: FontWeight.w900,
+                              fontStyle: FontStyle.italic,
+                              letterSpacing: 1.0)),
                     ],
                   ),
                 ),
@@ -345,23 +559,40 @@ class _AdvocateProfileScreenState extends State<AdvocateProfileScreen> {
             ],
           ),
           const SizedBox(height: 32),
-          _buildIdentityReadField('FULL NAME', 'TEST ADVOCATE'),
+          _buildIdentityReadField('FULL NAME', profile.name.toUpperCase()),
           const SizedBox(height: 24),
-          _buildIdentityReadField('EMAIL NODE', 'TESTADVOCATE@GMAIL.COM'),
+          _buildIdentityReadField('EMAIL NODE', profile.email.toUpperCase()),
           const SizedBox(height: 24),
-          _buildIdentityReadField('PHONE PROTOCOL', 'NOT SET'),
+          _buildIdentityReadField(
+              'PHONE PROTOCOL',
+              (profile.phone == null || profile.phone!.isEmpty)
+                  ? 'NOT SET'
+                  : profile.phone!),
           const SizedBox(height: 24),
-          _buildIdentityReadField('PROFESSIONAL BIO', 'Certified institutional advocate overseeing decentralized capital nodes for Vamanan Enterprises. Specialized in protocol ratification and institutional integrity monitoring.', isBio: true),
+          _buildIdentityReadField(
+            'PROFESSIONAL BIO',
+            (profile.bio == null || profile.bio!.isEmpty)
+                ? 'Certified institutional advocate overseeing decentralized capital nodes for Vamanan Enterprises. Specialized in protocol ratification and institutional integrity monitoring.'
+                : profile.bio!,
+            isBio: true,
+          ),
         ],
       ),
     );
   }
 
-  Widget _buildIdentityReadField(String label, String value, {bool isBio = false}) {
+  Widget _buildIdentityReadField(String label, String value,
+      {bool isBio = false}) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text(label, style: const TextStyle(color: Color(0xFFCBD5E1), fontSize: 10, fontWeight: FontWeight.w900, fontStyle: FontStyle.italic, letterSpacing: 1.5)),
+        Text(label,
+            style: const TextStyle(
+                color: Color(0xFFCBD5E1),
+                fontSize: 10,
+                fontWeight: FontWeight.w900,
+                fontStyle: FontStyle.italic,
+                letterSpacing: 1.5)),
         const SizedBox(height: 8),
         Container(
           width: double.infinity,
@@ -387,14 +618,22 @@ class _AdvocateProfileScreenState extends State<AdvocateProfileScreen> {
     );
   }
 
-  // 3b. Identity Details (Edit Mode from your latest image)
-  Widget _buildIdentityEditMode() {
+  // 3b. Identity Details (Edit Mode)
+  Widget _buildIdentityEditMode(AdvocateProfile profile) {
     final isMobile = MediaQuery.of(context).size.width < 600;
 
     return Container(
       key: const ValueKey('IDENTITY_EDIT'),
       padding: const EdgeInsets.all(32),
-      decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(40), boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.02), blurRadius: 20, offset: const Offset(0, 10))]),
+      decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(40),
+          boxShadow: [
+            BoxShadow(
+                color: Colors.black.withOpacity(0.02),
+                blurRadius: 20,
+                offset: const Offset(0, 10))
+          ]),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -402,18 +641,34 @@ class _AdvocateProfileScreenState extends State<AdvocateProfileScreen> {
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              Text('IDENTITY DETAILS', style: TextStyle(color: _navyBlue, fontSize: 20, fontWeight: FontWeight.w900, fontStyle: FontStyle.italic, letterSpacing: -0.5)),
+              Text('IDENTITY DETAILS',
+                  style: TextStyle(
+                      color: _navyBlue,
+                      fontSize: 20,
+                      fontWeight: FontWeight.w900,
+                      fontStyle: FontStyle.italic,
+                      letterSpacing: -0.5)),
               InkWell(
                 onTap: () => setState(() => _isEditingIdentity = false),
                 borderRadius: BorderRadius.circular(20),
                 child: Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                  decoration: BoxDecoration(color: const Color(0xFFEFF6FF), borderRadius: BorderRadius.circular(20), border: Border.all(color: const Color(0xFFBFDBFE))),
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                  decoration: BoxDecoration(
+                      color: const Color(0xFFEFF6FF),
+                      borderRadius: BorderRadius.circular(20),
+                      border: Border.all(color: const Color(0xFFBFDBFE))),
                   child: Row(
                     children: const [
                       Icon(Icons.close, size: 12, color: Color(0xFF3B82F6)),
                       SizedBox(width: 6),
-                      Text('ABORT', style: TextStyle(color: Color(0xFF3B82F6), fontSize: 10, fontWeight: FontWeight.w900, fontStyle: FontStyle.italic, letterSpacing: 1.0)),
+                      Text('ABORT',
+                          style: TextStyle(
+                              color: Color(0xFF3B82F6),
+                              fontSize: 10,
+                              fontWeight: FontWeight.w900,
+                              fontStyle: FontStyle.italic,
+                              letterSpacing: 1.0)),
                     ],
                   ),
                 ),
@@ -423,30 +678,54 @@ class _AdvocateProfileScreenState extends State<AdvocateProfileScreen> {
           const SizedBox(height: 32),
 
           // Top Fields (Row on Desktop, Stacked on Mobile)
-          isMobile 
-            ? Column(
-                children: [
-                  _buildEditField(label: 'FULL NAME', initialValue: 'TEST ADVOCATE', icon: Icons.person_outline, readOnly: true),
-                  const SizedBox(height: 24),
-                  _buildEditField(label: 'EMAIL NODE', initialValue: 'TESTADVOCATE@GMAIL.COM', icon: Icons.mail_outline, readOnly: true),
-                ],
-              )
-            : Row(
-                children: [
-                  Expanded(child: _buildEditField(label: 'FULL NAME', initialValue: 'TEST ADVOCATE', icon: Icons.person_outline, readOnly: true)),
-                  const SizedBox(width: 16),
-                  Expanded(child: _buildEditField(label: 'EMAIL NODE', initialValue: 'TESTADVOCATE@GMAIL.COM', icon: Icons.mail_outline, readOnly: true)),
-                ],
-              ),
-          
+          isMobile
+              ? Column(
+                  children: [
+                    _buildEditField(
+                        label: 'FULL NAME',
+                        initialValue: profile.name.toUpperCase(),
+                        icon: Icons.person_outline,
+                        readOnly: true),
+                    const SizedBox(height: 24),
+                    _buildEditField(
+                        label: 'EMAIL NODE',
+                        initialValue: profile.email.toUpperCase(),
+                        icon: Icons.mail_outline,
+                        readOnly: true),
+                  ],
+                )
+              : Row(
+                  children: [
+                    Expanded(
+                        child: _buildEditField(
+                            label: 'FULL NAME',
+                            initialValue: profile.name.toUpperCase(),
+                            icon: Icons.person_outline,
+                            readOnly: true)),
+                    const SizedBox(width: 16),
+                    Expanded(
+                        child: _buildEditField(
+                            label: 'EMAIL NODE',
+                            initialValue: profile.email.toUpperCase(),
+                            icon: Icons.mail_outline,
+                            readOnly: true)),
+                  ],
+                ),
+
           const SizedBox(height: 24),
-          _buildEditField(label: 'PHONE PROTOCOL', hint: 'ENTER CONTACT ID', icon: Icons.phone_outlined, controller: _phoneCtrl, isFocusedBorder: true),
-          
+          _buildEditField(
+              label: 'PHONE PROTOCOL',
+              hint: 'ENTER CONTACT ID',
+              icon: Icons.phone_outlined,
+              controller: _phoneCtrl,
+              isFocusedBorder: true),
+
           const SizedBox(height: 24),
-          _buildEditField(label: 'PROFESSIONAL BIO', controller: _bioCtrl, maxLines: 4),
-          
+          _buildEditField(
+              label: 'PROFESSIONAL BIO', controller: _bioCtrl, maxLines: 4),
+
           const SizedBox(height: 32),
-          
+
           // Action Buttons
           Wrap(
             spacing: 16,
@@ -454,24 +733,49 @@ class _AdvocateProfileScreenState extends State<AdvocateProfileScreen> {
             crossAxisAlignment: WrapCrossAlignment.center,
             children: [
               ElevatedButton.icon(
-                onPressed: _handleSaveIdentity,
-                icon: const Icon(Icons.save_outlined, size: 18),
-                label: const Text('SAVE IDENTITY NODE', style: TextStyle(fontSize: 11, fontWeight: FontWeight.w900, fontStyle: FontStyle.italic, letterSpacing: 1.0)),
+                onPressed: _isSavingIdentity ? null : _handleSaveIdentity,
+                icon: _isSavingIdentity
+                    ? const SizedBox(
+                        width: 16,
+                        height: 16,
+                        child: CircularProgressIndicator(
+                            strokeWidth: 2, color: Colors.white),
+                      )
+                    : const Icon(Icons.save_outlined, size: 18),
+                label: Text(
+                  _isSavingIdentity ? 'SAVING...' : 'SAVE IDENTITY NODE',
+                  style: const TextStyle(
+                      fontSize: 11,
+                      fontWeight: FontWeight.w900,
+                      fontStyle: FontStyle.italic,
+                      letterSpacing: 1.0),
+                ),
                 style: ElevatedButton.styleFrom(
                   backgroundColor: _navyBlue,
                   foregroundColor: Colors.white,
                   elevation: 0,
-                  padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 20),
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 32, vertical: 20),
+                  shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(20)),
                 ),
               ),
               InkWell(
                 onTap: () => setState(() => _isEditingIdentity = false),
                 borderRadius: BorderRadius.circular(20),
                 child: Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 20),
-                  decoration: BoxDecoration(color: const Color(0xFFF8FAFC), borderRadius: BorderRadius.circular(20)),
-                  child: const Text('CANCEL', style: TextStyle(color: Color(0xFF94A3B8), fontSize: 11, fontWeight: FontWeight.w900, fontStyle: FontStyle.italic, letterSpacing: 1.0)),
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 32, vertical: 20),
+                  decoration: BoxDecoration(
+                      color: const Color(0xFFF8FAFC),
+                      borderRadius: BorderRadius.circular(20)),
+                  child: const Text('CANCEL',
+                      style: TextStyle(
+                          color: Color(0xFF94A3B8),
+                          fontSize: 11,
+                          fontWeight: FontWeight.w900,
+                          fontStyle: FontStyle.italic,
+                          letterSpacing: 1.0)),
                 ),
               )
             ],
@@ -482,47 +786,65 @@ class _AdvocateProfileScreenState extends State<AdvocateProfileScreen> {
   }
 
   Widget _buildEditField({
-    required String label, 
-    String? initialValue, 
-    String? hint, 
-    IconData? icon, 
-    bool readOnly = false, 
-    TextEditingController? controller, 
+    required String label,
+    String? initialValue,
+    String? hint,
+    IconData? icon,
+    bool readOnly = false,
+    TextEditingController? controller,
     bool isFocusedBorder = false,
     int maxLines = 1,
   }) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text(label, style: const TextStyle(color: Color(0xFFCBD5E1), fontSize: 10, fontWeight: FontWeight.w900, fontStyle: FontStyle.italic, letterSpacing: 1.5)),
+        Text(label,
+            style: const TextStyle(
+                color: Color(0xFFCBD5E1),
+                fontSize: 10,
+                fontWeight: FontWeight.w900,
+                fontStyle: FontStyle.italic,
+                letterSpacing: 1.5)),
         const SizedBox(height: 8),
         TextFormField(
           controller: controller,
-          initialValue: initialValue,
+          initialValue: controller == null ? initialValue : null,
           readOnly: readOnly,
           maxLines: maxLines,
           style: TextStyle(
-            color: readOnly ? _navyBlue.withOpacity(0.8) : _navyBlue, 
-            fontSize: maxLines > 1 ? 13 : 14, 
-            fontWeight: maxLines > 1 ? FontWeight.w600 : FontWeight.w900, 
+            color: readOnly ? _navyBlue.withOpacity(0.8) : _navyBlue,
+            fontSize: maxLines > 1 ? 13 : 14,
+            fontWeight: maxLines > 1 ? FontWeight.w600 : FontWeight.w900,
             fontStyle: FontStyle.italic,
             height: maxLines > 1 ? 1.5 : 1.0,
           ),
           decoration: InputDecoration(
             hintText: hint,
-            hintStyle: const TextStyle(color: Color(0xFFCBD5E1), fontSize: 12, fontWeight: FontWeight.w900, fontStyle: FontStyle.italic, letterSpacing: 0.5),
-            prefixIcon: icon != null ? Icon(icon, color: const Color(0xFFCBD5E1), size: 20) : null,
+            hintStyle: const TextStyle(
+                color: Color(0xFFCBD5E1),
+                fontSize: 12,
+                fontWeight: FontWeight.w900,
+                fontStyle: FontStyle.italic,
+                letterSpacing: 0.5),
+            prefixIcon: icon != null
+                ? Icon(icon, color: const Color(0xFFCBD5E1), size: 20)
+                : null,
             filled: true,
             fillColor: const Color(0xFFF8FAFC), // Light grey matching image
             contentPadding: const EdgeInsets.all(20),
-            border: OutlineInputBorder(borderRadius: BorderRadius.circular(20), borderSide: const BorderSide(color: Colors.transparent)),
+            border: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(20),
+                borderSide: const BorderSide(color: Colors.transparent)),
             enabledBorder: OutlineInputBorder(
-              borderRadius: BorderRadius.circular(20), 
-              borderSide: BorderSide(color: isFocusedBorder ? _goldAccent : Colors.transparent, width: isFocusedBorder ? 2 : 1),
+              borderRadius: BorderRadius.circular(20),
+              borderSide: BorderSide(
+                  color: isFocusedBorder ? _goldAccent : Colors.transparent,
+                  width: isFocusedBorder ? 2 : 1),
             ),
             focusedBorder: OutlineInputBorder(
-              borderRadius: BorderRadius.circular(20), 
-              borderSide: BorderSide(color: _goldAccent, width: 2), // Always gold on focus
+              borderRadius: BorderRadius.circular(20),
+              borderSide: BorderSide(
+                  color: _goldAccent, width: 2), // Always gold on focus
             ),
           ),
         ),
@@ -535,27 +857,42 @@ class _AdvocateProfileScreenState extends State<AdvocateProfileScreen> {
     return Container(
       key: const ValueKey('SECURITY'),
       padding: const EdgeInsets.all(32),
-      decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(40), boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.02), blurRadius: 20, offset: const Offset(0, 10))]),
+      decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(40),
+          boxShadow: [
+            BoxShadow(
+                color: Colors.black.withOpacity(0.02),
+                blurRadius: 20,
+                offset: const Offset(0, 10))
+          ]),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              Text('SECURITY HUB', style: TextStyle(color: _navyBlue, fontSize: 20, fontWeight: FontWeight.w900, fontStyle: FontStyle.italic, letterSpacing: -0.5)),
+              Text('SECURITY HUB',
+                  style: TextStyle(
+                      color: _navyBlue,
+                      fontSize: 20,
+                      fontWeight: FontWeight.w900,
+                      fontStyle: FontStyle.italic,
+                      letterSpacing: -0.5)),
               Container(
                 padding: const EdgeInsets.all(6),
-                decoration: BoxDecoration(shape: BoxShape.circle, border: Border.all(color: _goldAccent.withOpacity(0.5))),
+                decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    border: Border.all(color: _goldAccent.withOpacity(0.5))),
                 child: Icon(Icons.security, size: 16, color: _goldAccent),
               )
             ],
           ),
           const SizedBox(height: 32),
-          
           AnimatedSwitcher(
             duration: const Duration(milliseconds: 300),
-            child: _isChangingNode 
-                ? _buildUpdateCredentialsCard() 
+            child: _isChangingNode
+                ? _buildUpdateCredentialsCard()
                 : _buildAccessNodeCard(),
           ),
         ],
@@ -586,16 +923,30 @@ class _AdvocateProfileScreenState extends State<AdvocateProfileScreen> {
                   borderRadius: BorderRadius.circular(16),
                   border: Border.all(color: const Color(0xFFE2E8F0)),
                 ),
-                child: const Icon(Icons.lock_outline, color: Color(0xFFCBD5E1), size: 24),
+                child: const Icon(Icons.lock_outline,
+                    color: Color(0xFFCBD5E1), size: 24),
               ),
               const SizedBox(width: 20),
               Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text('INSTITUTIONAL ACCESS NODE', style: TextStyle(color: _navyBlue, fontSize: 13, fontWeight: FontWeight.w900, fontStyle: FontStyle.italic, letterSpacing: 0.5)),
+                    Text('INSTITUTIONAL ACCESS NODE',
+                        style: TextStyle(
+                            color: _navyBlue,
+                            fontSize: 13,
+                            fontWeight: FontWeight.w900,
+                            fontStyle: FontStyle.italic,
+                            letterSpacing: 0.5)),
                     const SizedBox(height: 8),
-                    Text('UPDATE YOUR ENCRYPTED PROTOCOL KEYS', style: TextStyle(color: _slateText, fontSize: 10, fontWeight: FontWeight.w900, fontStyle: FontStyle.italic, letterSpacing: 1.0, height: 1.5)),
+                    Text('UPDATE YOUR ENCRYPTED PROTOCOL KEYS',
+                        style: TextStyle(
+                            color: _slateText,
+                            fontSize: 10,
+                            fontWeight: FontWeight.w900,
+                            fontStyle: FontStyle.italic,
+                            letterSpacing: 1.0,
+                            height: 1.5)),
                   ],
                 ),
               )
@@ -609,9 +960,15 @@ class _AdvocateProfileScreenState extends State<AdvocateProfileScreen> {
               foregroundColor: Colors.white,
               elevation: 0,
               padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 20),
-              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+              shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(16)),
             ),
-            child: const Text('CHANGE NODE', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w900, fontStyle: FontStyle.italic, letterSpacing: 1.0)),
+            child: const Text('CHANGE NODE',
+                style: TextStyle(
+                    fontSize: 12,
+                    fontWeight: FontWeight.w900,
+                    fontStyle: FontStyle.italic,
+                    letterSpacing: 1.0)),
           ),
         ],
       ),
@@ -638,7 +995,13 @@ class _AdvocateProfileScreenState extends State<AdvocateProfileScreen> {
                 children: [
                   Icon(Icons.lock_open, color: _goldAccent, size: 20),
                   const SizedBox(width: 12),
-                  Text('UPDATE CREDENTIALS', style: TextStyle(color: _navyBlue, fontSize: 14, fontWeight: FontWeight.w900, fontStyle: FontStyle.italic, letterSpacing: 0.5)),
+                  Text('UPDATE CREDENTIALS',
+                      style: TextStyle(
+                          color: _navyBlue,
+                          fontSize: 14,
+                          fontWeight: FontWeight.w900,
+                          fontStyle: FontStyle.italic,
+                          letterSpacing: 0.5)),
                 ],
               ),
               IconButton(
@@ -648,26 +1011,48 @@ class _AdvocateProfileScreenState extends State<AdvocateProfileScreen> {
             ],
           ),
           const SizedBox(height: 24),
-          
-          _buildPasswordField('NEW ACCESS NODE', 'ENTER NEW PROTOCOL KEY...', _obscureNew, () => setState(() => _obscureNew = !_obscureNew)),
+          _buildPasswordField(
+              'NEW ACCESS NODE',
+              'ENTER NEW PROTOCOL KEY...',
+              _newPasswordCtrl,
+              _obscureNew,
+              () => setState(() => _obscureNew = !_obscureNew)),
           const SizedBox(height: 24),
-          _buildPasswordField('CONFIRM NEW ACCESS NODE', 'CONFIRM NEW PROTOCOL KEY...', _obscureConfirm, () => setState(() => _obscureConfirm = !_obscureConfirm)),
+          _buildPasswordField(
+              'CONFIRM NEW ACCESS NODE',
+              'CONFIRM NEW PROTOCOL KEY...',
+              _confirmPasswordCtrl,
+              _obscureConfirm,
+              () => setState(() => _obscureConfirm = !_obscureConfirm)),
           const SizedBox(height: 32),
-          
           Wrap(
             spacing: 16,
             runSpacing: 16,
             children: [
               ElevatedButton(
-                onPressed: _handleUpdateSecurity,
+                onPressed: _isSavingSecurity ? null : _handleUpdateSecurity,
                 style: ElevatedButton.styleFrom(
                   backgroundColor: _navyBlue,
                   foregroundColor: Colors.white,
                   elevation: 0,
-                  padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 20),
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 32, vertical: 20),
+                  shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(16)),
                 ),
-                child: const Text('UPDATE SECURITY PASSWORD', style: TextStyle(fontSize: 11, fontWeight: FontWeight.w900, fontStyle: FontStyle.italic, letterSpacing: 1.0)),
+                child: _isSavingSecurity
+                    ? const SizedBox(
+                        width: 18,
+                        height: 18,
+                        child: CircularProgressIndicator(
+                            strokeWidth: 2, color: Colors.white),
+                      )
+                    : const Text('UPDATE SECURITY PASSWORD',
+                        style: TextStyle(
+                            fontSize: 11,
+                            fontWeight: FontWeight.w900,
+                            fontStyle: FontStyle.italic,
+                            letterSpacing: 1.0)),
               ),
               OutlinedButton(
                 onPressed: () => setState(() => _isChangingNode = false),
@@ -675,10 +1060,17 @@ class _AdvocateProfileScreenState extends State<AdvocateProfileScreen> {
                   foregroundColor: _slateText,
                   backgroundColor: Colors.white,
                   side: const BorderSide(color: Color(0xFFE2E8F0), width: 2),
-                  padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 20),
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 32, vertical: 20),
+                  shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(16)),
                 ),
-                child: const Text('ABORT', style: TextStyle(fontSize: 11, fontWeight: FontWeight.w900, fontStyle: FontStyle.italic, letterSpacing: 1.0)),
+                child: const Text('ABORT',
+                    style: TextStyle(
+                        fontSize: 11,
+                        fontWeight: FontWeight.w900,
+                        fontStyle: FontStyle.italic,
+                        letterSpacing: 1.0)),
               ),
             ],
           )
@@ -687,28 +1079,61 @@ class _AdvocateProfileScreenState extends State<AdvocateProfileScreen> {
     );
   }
 
-  Widget _buildPasswordField(String label, String hint, bool isObscured, VoidCallback onToggle) {
+  Widget _buildPasswordField(
+      String label,
+      String hint,
+      TextEditingController controller,
+      bool isObscured,
+      VoidCallback onToggle) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text(label, style: const TextStyle(color: Color(0xFFCBD5E1), fontSize: 10, fontWeight: FontWeight.w900, fontStyle: FontStyle.italic, letterSpacing: 1.5)),
+        Text(label,
+            style: const TextStyle(
+                color: Color(0xFFCBD5E1),
+                fontSize: 10,
+                fontWeight: FontWeight.w900,
+                fontStyle: FontStyle.italic,
+                letterSpacing: 1.5)),
         const SizedBox(height: 8),
         TextField(
+          controller: controller,
           obscureText: isObscured,
-          style: TextStyle(color: _navyBlue, fontSize: 14, fontWeight: FontWeight.w900, fontStyle: FontStyle.italic),
+          style: TextStyle(
+              color: _navyBlue,
+              fontSize: 14,
+              fontWeight: FontWeight.w900,
+              fontStyle: FontStyle.italic),
           decoration: InputDecoration(
             hintText: hint,
-            hintStyle: const TextStyle(color: Color(0xFFCBD5E1), fontSize: 12, fontWeight: FontWeight.w900, fontStyle: FontStyle.italic, letterSpacing: 0.5),
+            hintStyle: const TextStyle(
+                color: Color(0xFFCBD5E1),
+                fontSize: 12,
+                fontWeight: FontWeight.w900,
+                fontStyle: FontStyle.italic,
+                letterSpacing: 0.5),
             filled: true,
             fillColor: Colors.white,
-            contentPadding: const EdgeInsets.symmetric(horizontal: 24, vertical: 20),
-            border: OutlineInputBorder(borderRadius: BorderRadius.circular(20), borderSide: const BorderSide(color: Color(0xFFF1F5F9))),
-            enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(20), borderSide: const BorderSide(color: Color(0xFFF1F5F9))),
-            focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(20), borderSide: BorderSide(color: _goldAccent)),
+            contentPadding:
+                const EdgeInsets.symmetric(horizontal: 24, vertical: 20),
+            border: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(20),
+                borderSide: const BorderSide(color: Color(0xFFF1F5F9))),
+            enabledBorder: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(20),
+                borderSide: const BorderSide(color: Color(0xFFF1F5F9))),
+            focusedBorder: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(20),
+                borderSide: BorderSide(color: _goldAccent)),
             suffixIcon: Padding(
               padding: const EdgeInsets.only(right: 12.0),
               child: IconButton(
-                icon: Icon(isObscured ? Icons.visibility_off_outlined : Icons.visibility_outlined, color: const Color(0xFFCBD5E1), size: 20),
+                icon: Icon(
+                    isObscured
+                        ? Icons.visibility_off_outlined
+                        : Icons.visibility_outlined,
+                    color: const Color(0xFFCBD5E1),
+                    size: 20),
                 onPressed: onToggle,
               ),
             ),

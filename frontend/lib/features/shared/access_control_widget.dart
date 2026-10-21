@@ -1,6 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:frontend/core/theme/app_theme.dart';
 import 'package:frontend/shared/widgets/app_toast.dart';
+import 'package:frontend/models/settings_models.dart';
+import 'package:frontend/services/settings_service.dart';
+import 'package:frontend/shared/widgets/app_loader.dart';
 
 class AccessControlWidget extends StatefulWidget {
   const AccessControlWidget({super.key});
@@ -12,42 +15,68 @@ class AccessControlWidget extends StatefulWidget {
 class _AccessControlWidgetState extends State<AccessControlWidget> {
   // State
   String? _selectedStaff;
-  final Set<String> _selectedPermissions = {'dashboard', 'investments', 'assets', 'invoices'};
+  String? _selectedStaffId;
+  final Set<String> _selectedPermissions = {'overview', 'investments', 'inventory', 'users'};
+  List<SettingsStaff> _staffMembers = [];
+  bool _isLoading = true;
+  bool _isSaving = false;
 
   // Mock Data
-  final List<String> _staffMembers = [
-    'GUNA TEST · STAFF · GUNATESTSTAFF@GMAIL.COM',
-    'ADMINISTRATOR · ADMIN · ADMIN@MAKKALGOLD.COM',
-    'SUPPORT USER · STAFF · SUPPORT@MAKKALGOLD.COM',
-  ];
-
   final List<Map<String, dynamic>> _permissions = [
-    {'id': 'dashboard', 'label': 'DASHBOARD', 'icon': Icons.bar_chart},
+    {'id': 'overview', 'label': 'DASHBOARD', 'icon': Icons.bar_chart},
     {'id': 'investments', 'label': 'INVESTMENTS', 'icon': Icons.shopping_cart_outlined},
-    {'id': 'assets', 'label': 'ASSETS', 'icon': Icons.shopping_bag_outlined},
-    {'id': 'invoices', 'label': 'INVOICES', 'icon': Icons.receipt_long_outlined},
-    {'id': 'gstr', 'label': 'GSTR FILING', 'icon': Icons.request_quote_outlined},
-    {'id': 'entities', 'label': 'ENTITIES', 'icon': Icons.people_outline},
+    {'id': 'inventory', 'label': 'ASSETS', 'icon': Icons.shopping_bag_outlined},
+    {'id': 'users', 'label': 'ENTITIES', 'icon': Icons.people_outline},
     {'id': 'genealogy', 'label': 'GENEALOGY', 'icon': Icons.account_tree_outlined},
-    {'id': 'wallets', 'label': 'WALLETS', 'icon': Icons.account_balance_wallet_outlined},
+    {'id': 'wallets_view', 'label': 'WALLETS', 'icon': Icons.account_balance_wallet_outlined},
     {'id': 'kyc', 'label': 'KYC', 'icon': Icons.verified_user_outlined},
     {'id': 'withdrawals', 'label': 'WITHDRAWALS', 'icon': Icons.account_balance_outlined},
-    {'id': 'notifications', 'label': 'NOTIFICATIONS', 'icon': Icons.campaign_outlined},
     {'id': 'market_rates', 'label': 'MARKET RATES', 'icon': Icons.trending_up},
-    {'id': 'staffing', 'label': 'STAFFING', 'icon': Icons.person_add_outlined},
+    {'id': 'recruitment', 'label': 'STAFFING', 'icon': Icons.person_add_outlined},
     {'id': 'settings', 'label': 'SETTINGS', 'icon': Icons.language},
   ];
 
+  @override
+  void initState() {
+    super.initState();
+    _loadStaff();
+  }
+
+  Future<void> _loadStaff() async {
+    try {
+      final staff = await SettingsService.instance.fetchStaff();
+      if (!mounted) return;
+      setState(() {
+        _staffMembers = staff;
+        _isLoading = false;
+      });
+    } catch (error) {
+      if (mounted) setState(() => _isLoading = false);
+      ToastService.show(title: 'Load Failed', message: error.toString(), type: ToastType.error);
+    }
+  }
+
   // --- Handlers ---
 
-  void _handleSavePermissions() {
-    if (_selectedStaff == null) return;
-    
-    ToastService.show(
+  Future<void> _handleSavePermissions() async {
+    if (_selectedStaffId == null) return;
+    setState(() => _isSaving = true);
+    try {
+      await SettingsService.instance.updatePermissions(
+        userId: _selectedStaffId!,
+        permissions: _selectedPermissions.toList(),
+      );
+      if (!mounted) return;
+      ToastService.show(
       title: 'Permissions Saved', 
       message: 'Access control updated successfully for ${_selectedStaff!.split(' · ').first}.', 
       type: ToastType.success
-    );
+      );
+    } catch (error) {
+      if (mounted) ToastService.show(title: 'Save Failed', message: error.toString(), type: ToastType.error);
+    } finally {
+      if (mounted) setState(() => _isSaving = false);
+    }
   }
 
   void _togglePermission(String id) {
@@ -79,7 +108,9 @@ class _AccessControlWidgetState extends State<AccessControlWidget> {
         border: Border.all(color: AppColors.kBorder),
       ),
       padding: const EdgeInsets.all(32.0),
-      child: Column(
+        child: _isLoading
+          ? const Center(child: AppLoader())
+          : Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           // --- 1. Header ---
@@ -122,8 +153,17 @@ class _AccessControlWidgetState extends State<AccessControlWidget> {
           ),
           const SizedBox(height: 8),
           DropdownButtonFormField<String>(
-            value: _selectedStaff,
-            onChanged: (val) => setState(() => _selectedStaff = val),
+            value: _selectedStaffId,
+            onChanged: (val) {
+              final staff = _staffMembers.firstWhere((item) => item.id == val);
+              setState(() {
+                _selectedStaffId = val;
+                _selectedStaff = '${staff.name} · ${staff.role.toUpperCase()} · ${staff.email}';
+                _selectedPermissions
+                  ..clear()
+                  ..addAll(staff.permissions);
+              });
+            },
             icon: const Icon(Icons.settings_outlined, color: Color(0xFFCBD5E1), size: 20),
             hint: const Text(
               '— CHOOSE A STAFF MEMBER —', 
@@ -140,7 +180,8 @@ class _AccessControlWidgetState extends State<AccessControlWidget> {
               focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(16), borderSide: const BorderSide(color: Color(0xFF1E3A8A))),
             ),
             items: _staffMembers.map((staff) {
-              return DropdownMenuItem(value: staff, child: Text(staff, overflow: TextOverflow.ellipsis));
+              final label = '${staff.name} · ${staff.role.toUpperCase()} · ${staff.email}';
+              return DropdownMenuItem(value: staff.id, child: Text(label, overflow: TextOverflow.ellipsis));
             }).toList(),
           ),
 
@@ -246,7 +287,7 @@ class _AccessControlWidgetState extends State<AccessControlWidget> {
             SizedBox(
               width: double.infinity,
               child: ElevatedButton.icon(
-                onPressed: _handleSavePermissions,
+                onPressed: _isSaving ? null : _handleSavePermissions,
                 icon: const Icon(Icons.save_outlined, size: 16),
                 label: const Text(
                   'SAVE ACCESS PERMISSIONS', 

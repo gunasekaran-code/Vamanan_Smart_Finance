@@ -1,8 +1,14 @@
 import 'package:flutter/material.dart';
+import 'package:intl/intl.dart';
 import 'package:frontend/core/theme/app_theme.dart';
+import 'package:frontend/core/utils/inr_format.dart';
 import 'package:frontend/shared/widgets/app_page.dart';
 import 'package:frontend/shared/widgets/app_toast.dart';
 import 'auditor_payment_screen.dart';
+import 'auditor_products_screen.dart';
+import '../../models/auditor_buy_model.dart';
+import '../../services/auditor_buy_service.dart';
+import 'package:frontend/shared/widgets/app_loader.dart';
 
 class AuditorBuyScreen extends StatefulWidget {
   const AuditorBuyScreen({super.key});
@@ -16,21 +22,108 @@ class _AuditorBuyScreenState extends State<AuditorBuyScreen> {
   final Color _navyBlue = AppColors.kPrimaryDark;
   final Color _slateText = AppColors.kTextMuted;
   final Color _lightBorder = const Color(0xFFF1F5F9);
-  
+
   // State
   String _activeTab = 'GOLD 22K'; // GOLD 22K, SILVER PURE, PRODUCTS
   int _weightGrams = 1;
 
-  // Mock Live Prices
-  final double _goldPrice = 15127.00;
-  final double _silverPrice = 300.00;
+  // Live gold rate (fetched). Silver has no backend endpoint yet, so it
+  // stays a local fallback like in the original screen — flagged clearly.
+  double _goldPrice = 0;
+  static const double _silverPriceFallback = 100.00;
+  bool _isLoadingRate = true;
+  bool _isRefreshing = false;
+
+  // Bumped to make the PRODUCTS tab reload from the server.
+  int _productsRefreshToken = 0;
+
+  // My Orders
+  List<OrderHistoryItem> _orders = [];
+  bool _isLoadingOrders = true;
+  String? _ordersError;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadGoldRate(showToast: false);
+    _loadOrders();
+    AuditorBuyService.orderPlaced.addListener(_loadOrders);
+  }
+
+  @override
+  void dispose() {
+    AuditorBuyService.orderPlaced.removeListener(_loadOrders);
+    super.dispose();
+  }
+
+  Future<void> _loadGoldRate({bool showToast = true}) async {
+    setState(() {
+      if (showToast) _isRefreshing = true;
+      _isLoadingRate = _goldPrice == 0;
+    });
+    try {
+      // The REFRESH button (showToast) always re-syncs; otherwise a rate
+      // fetched in the last minute is reused.
+      final rates =
+          await AuditorBuyService.refreshGoldRate(forceRefresh: showToast);
+      if (!mounted) return;
+      setState(() {
+        _goldPrice = rates.goldMarketPricePerGram;
+      });
+      if (showToast) {
+        ToastService.show(
+          title: 'Prices Refreshed',
+          message: 'Live market rates have been updated.',
+          type: ToastType.success,
+        );
+      }
+    } catch (e) {
+      if (!mounted) return;
+      if (showToast) {
+        ToastService.show(title: 'Refresh Failed', message: e.toString(), type: ToastType.error);
+      }
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isLoadingRate = false;
+          _isRefreshing = false;
+        });
+      }
+    }
+  }
+
+  Future<void> _loadOrders() async {
+    final userId = AuditorSession.currentUserId;
+    if (userId == null) {
+      setState(() {
+        _isLoadingOrders = false;
+        _ordersError = 'You are not signed in. Sign in again to see your orders.';
+      });
+      return;
+    }
+    setState(() {
+      _isLoadingOrders = true;
+      _ordersError = null;
+    });
+    try {
+      final orders = await AuditorBuyService.fetchMyOrders(userId);
+      if (!mounted) return;
+      setState(() => _orders = orders);
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _ordersError = e.toString());
+    } finally {
+      if (mounted) setState(() => _isLoadingOrders = false);
+    }
+  }
 
   void _handleRefresh() {
-    ToastService.show(
-      title: 'Prices Refreshed',
-      message: 'Live market rates have been updated.',
-      type: ToastType.success,
-    );
+    if (_activeTab == 'PRODUCTS') {
+      setState(() => _productsRefreshToken++);
+      _loadOrders();
+    } else {
+      _loadGoldRate(showToast: true);
+    }
   }
 
   void _incrementWeight(int delta) {
@@ -42,7 +135,7 @@ class _AuditorBuyScreenState extends State<AuditorBuyScreen> {
   }
 
   void _proceedToBuy() {
-    double price = _activeTab == 'GOLD 22K' ? _goldPrice : _silverPrice;
+    double price = _activeTab == 'GOLD 22K' ? _goldPrice : _silverPriceFallback;
     double baseAmt = price * _weightGrams;
     double gst = baseAmt * 0.03;
     double total = baseAmt + gst;
@@ -66,14 +159,17 @@ class _AuditorBuyScreenState extends State<AuditorBuyScreen> {
       children: [
         Center(
           child: Container(
-            constraints: const BoxConstraints(maxWidth: 800),
+            constraints: const BoxConstraints(maxWidth: 1200),
+            // AppPage already pads 20px; don't add more on phones.
+            padding: EdgeInsets.symmetric(
+                horizontal: MediaQuery.sizeOf(context).width < 600 ? 0 : 15),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
                 // 1. HEADER
                 Row(
                   children: const [
-                    Icon(Icons.circle, color: AppColors.goldColor, size: 8),
+                    Icon(Icons.star, color: AppColors.goldColor, size: 8),
                     SizedBox(width: 8),
                     Text('LIVE PRICES', style: TextStyle(color: Color(0xFF94A3B8), fontSize: 10, fontWeight: FontWeight.w900, fontStyle: FontStyle.italic, letterSpacing: 2.0)),
                   ],
@@ -83,12 +179,14 @@ class _AuditorBuyScreenState extends State<AuditorBuyScreen> {
                 const SizedBox(height: 4),
                 Text('BUY GOLD, SILVER OR PRODUCTS AND EARN DAILY REWARDS', style: TextStyle(color: _slateText, fontSize: 10, fontWeight: FontWeight.w900, fontStyle: FontStyle.italic, letterSpacing: 1.0)),
                 const SizedBox(height: 24),
-                
+
                 Align(
                   alignment: Alignment.centerLeft,
                   child: OutlinedButton.icon(
-                    onPressed: _handleRefresh,
-                    icon: const Icon(Icons.sync, size: 16),
+                    onPressed: _isRefreshing ? null : _handleRefresh,
+                    icon: _isRefreshing
+                        ? const SizedBox(width: 14, height: 14, child: CircularProgressIndicator(strokeWidth: 2))
+                        : const Icon(Icons.sync, size: 16),
                     label: const Text('REFRESH', style: TextStyle(fontWeight: FontWeight.w900, fontStyle: FontStyle.italic, fontSize: 11, letterSpacing: 1.0)),
                     style: OutlinedButton.styleFrom(
                       foregroundColor: AppColors.kTextDark,
@@ -116,11 +214,14 @@ class _AuditorBuyScreenState extends State<AuditorBuyScreen> {
                 ),
                 const SizedBox(height: 32),
 
-                // 3. DYNAMIC CONTENT (CALCULATOR OR EMPTY STATE)
+                // 3. DYNAMIC CONTENT (CALCULATOR, PRODUCTS LIST, OR EMPTY STATE)
                 AnimatedSwitcher(
                   duration: const Duration(milliseconds: 300),
                   child: _activeTab == 'PRODUCTS'
-                      ? _buildProductsEmptyState()
+                      ? AuditorProductsScreen(
+                          key: const ValueKey('PRODUCTS'),
+                          refreshToken: _productsRefreshToken,
+                        )
                       : _buildCalculatorCard(),
                 ),
                 const SizedBox(height: 40),
@@ -145,7 +246,7 @@ class _AuditorBuyScreenState extends State<AuditorBuyScreen> {
                   ],
                 ),
                 const SizedBox(height: 24),
-                _buildOrdersEmptyState(),
+                _buildOrdersSection(),
                 const SizedBox(height: 40),
               ],
             ),
@@ -189,12 +290,23 @@ class _AuditorBuyScreenState extends State<AuditorBuyScreen> {
   }
 
   Widget _buildCalculatorCard() {
-    double currentPrice = _activeTab == 'GOLD 22K' ? _goldPrice : _silverPrice;
-    String trendText = _activeTab == 'GOLD 22K' ? '+2.3% TODAY' : '+1.8% TODAY';
-    
+    final bool isGold = _activeTab == 'GOLD 22K';
+    double currentPrice = isGold ? _goldPrice : _silverPriceFallback;
+    String trendText = isGold ? 'LIVE MARKET RATE' : 'REFERENCE RATE';
+
     double baseAmt = currentPrice * _weightGrams;
     double gst = baseAmt * 0.03;
     double total = baseAmt + gst;
+
+    if (isGold && _isLoadingRate) {
+      return Container(
+        key: ValueKey(_activeTab),
+        width: double.infinity,
+        padding: const EdgeInsets.symmetric(vertical: 80),
+        decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(32), border: Border.all(color: _lightBorder, width: 2)),
+        child: const Center(child: AppLoader()),
+      );
+    }
 
     return Column(
       key: ValueKey(_activeTab),
@@ -226,7 +338,7 @@ class _AuditorBuyScreenState extends State<AuditorBuyScreen> {
                     decoration: BoxDecoration(color: AppColors.goldBadgeBg, borderRadius: BorderRadius.circular(20), border: Border.all(color: AppColors.goldBorder)),
                     child: Row(
                       children: [
-                        const Icon(Icons.trending_up, color: AppColors.goldColor, size: 14),
+                        Icon(isGold ? Icons.trending_up : Icons.info_outline, color: AppColors.goldColor, size: 14),
                         const SizedBox(width: 4),
                         Text(trendText, style: const TextStyle(color: AppColors.goldColor, fontSize: 10, fontWeight: FontWeight.w900, fontStyle: FontStyle.italic, letterSpacing: 1.0)),
                       ],
@@ -349,7 +461,9 @@ class _AuditorBuyScreenState extends State<AuditorBuyScreen> {
                     const SizedBox(width: 12),
                     Expanded(
                       child: Text(
-                        'PRICES ARE BASED ON THE LIVE PURE MARKET RATE. YOUR DAILY REWARDS START THE NEXT DAY.',
+                        isGold
+                            ? 'GOLD PRICE IS THE LIVE MARKET RATE. YOUR DAILY REWARDS START THE NEXT DAY.'
+                            : 'SILVER PRICE IS A REFERENCE RATE (NO LIVE FEED CONFIGURED YET). YOUR DAILY REWARDS START THE NEXT DAY.',
                         style: TextStyle(color: const Color(0xFF94A3B8).withOpacity(0.8), fontSize: 8, fontWeight: FontWeight.w900, fontStyle: FontStyle.italic, letterSpacing: 0.5, height: 1.5),
                       ),
                     ),
@@ -363,19 +477,201 @@ class _AuditorBuyScreenState extends State<AuditorBuyScreen> {
     );
   }
 
-  Widget _buildProductsEmptyState() {
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.symmetric(vertical: 80),
-      decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(32), border: Border.all(color: _lightBorder, width: 2)),
-      child: Column(
-        children: [
-          Icon(Icons.inventory_2_outlined, size: 64, color: const Color(0xFFE2E8F0)),
-          const SizedBox(height: 24),
-          const Text('NO PRODUCTS AVAILABLE', style: TextStyle(color: Color(0xFF94A3B8), fontSize: 12, fontWeight: FontWeight.w900, fontStyle: FontStyle.italic, letterSpacing: 1.5)),
+  Widget _buildOrdersSection() {
+    if (_isLoadingOrders) {
+      return Container(
+        width: double.infinity,
+        padding: const EdgeInsets.symmetric(vertical: 60),
+        decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(32), border: Border.all(color: _lightBorder, width: 2)),
+        child: const Center(child: AppLoader()),
+      );
+    }
+
+    if (_ordersError != null) {
+      return Container(
+        width: double.infinity,
+        padding: const EdgeInsets.symmetric(vertical: 48, horizontal: 24),
+        decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(32), border: Border.all(color: _lightBorder, width: 2)),
+        child: Column(
+          children: [
+            const Icon(Icons.error_outline, size: 40, color: Color(0xFFE2E8F0)),
+            const SizedBox(height: 12),
+            Text(_ordersError!, textAlign: TextAlign.center, style: const TextStyle(color: Color(0xFFCBD5E1), fontSize: 9, fontWeight: FontWeight.w900, fontStyle: FontStyle.italic)),
+            const SizedBox(height: 12),
+            TextButton(onPressed: _loadOrders, child: const Text('RETRY')),
+          ],
+        ),
+      );
+    }
+
+    if (_orders.isEmpty) {
+      return _buildOrdersEmptyState();
+    }
+
+    return Column(
+      children: _orders.map((o) => _buildOrderTile(o)).toList(),
+    );
+  }
+
+  Widget _buildOrderTile(OrderHistoryItem o) {
+    final status = o.status.toLowerCase();
+    final Color statusColor;
+    final IconData statusIcon;
+    switch (status) {
+      case 'active':
+      case 'completed':
+        statusColor = AppColors.kSuccess;
+        statusIcon = Icons.check_circle_outline;
+        break;
+      case 'rejected':
+      case 'cancelled':
+        statusColor = AppColors.kDanger;
+        statusIcon = Icons.cancel_outlined;
+        break;
+      default:
+        statusColor = AppColors.goldColor;
+        statusIcon = Icons.access_time;
+    }
+
+    final IconData assetIcon;
+    switch (o.assetType.toLowerCase()) {
+      case 'silver':
+        assetIcon = Icons.toll_outlined;
+        break;
+      case 'product':
+        assetIcon = Icons.inventory_2_outlined;
+        break;
+      default:
+        assetIcon = Icons.bolt_outlined;
+    }
+
+    final created = o.createdDate;
+    final delivery = o.estimatedDelivery;
+    final showDelivery = delivery != null && (status == 'pending' || status == 'active');
+    final utr = o.transactionId?.trim() ?? '';
+    const metaStyle = TextStyle(fontSize: 11, fontWeight: FontWeight.w900, fontStyle: FontStyle.italic, letterSpacing: 0.8);
+
+    final details = Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Wrap(
+          spacing: 10,
+          runSpacing: 6,
+          crossAxisAlignment: WrapCrossAlignment.center,
+          children: [
+            Text((o.productName ?? o.assetType).toUpperCase(),
+                style: TextStyle(color: _navyBlue, fontSize: 15, fontWeight: FontWeight.w900, fontStyle: FontStyle.italic, letterSpacing: -0.3)),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+              decoration: BoxDecoration(
+                color: statusColor.withOpacity(0.08),
+                borderRadius: BorderRadius.circular(20),
+                border: Border.all(color: statusColor.withOpacity(0.35)),
+              ),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(statusIcon, color: statusColor, size: 12),
+                  const SizedBox(width: 4),
+                  Text(o.status.toUpperCase(),
+                      style: TextStyle(color: statusColor, fontSize: 9, fontWeight: FontWeight.w900, fontStyle: FontStyle.italic, letterSpacing: 1.0)),
+                ],
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 8),
+        Wrap(
+          spacing: 16,
+          runSpacing: 4,
+          children: [
+            Text.rich(TextSpan(children: [
+              TextSpan(text: formatInr(o.totalAmount), style: metaStyle.copyWith(color: AppColors.kTextDark)),
+              TextSpan(text: ' INVESTED', style: metaStyle.copyWith(color: const Color(0xFF94A3B8))),
+            ])),
+            if (o.installment > 0)
+              Text('+${formatInr(o.installment)}/MONTH', style: metaStyle.copyWith(color: AppColors.goldColor)),
+            if ((o.paymentMethod ?? '').isNotEmpty)
+              Text(o.paymentMethod!.toUpperCase(), style: metaStyle.copyWith(color: const Color(0xFFCBD5E1))),
+          ],
+        ),
+        if (showDelivery) ...[
           const SizedBox(height: 8),
-          const Text('ADMIN HAS NOT LISTED ANY PRODUCTS YET', style: TextStyle(color: Color(0xFFCBD5E1), fontSize: 10, fontWeight: FontWeight.w900, fontStyle: FontStyle.italic, letterSpacing: 1.0)),
+          Row(
+            children: [
+              const Icon(Icons.access_time, color: AppColors.kInfo, size: 13),
+              const SizedBox(width: 6),
+              Flexible(
+                child: Text('EST. DELIVERY: ${DateFormat('dd MMM').format(delivery).toUpperCase()} (7 WORKING DAYS)',
+                    style: metaStyle.copyWith(color: AppColors.kInfo)),
+              ),
+            ],
+          ),
         ],
+      ],
+    );
+
+    final meta = Column(
+      crossAxisAlignment: CrossAxisAlignment.end,
+      children: [
+        Text(created != null ? DateFormat('dd MMM yyyy').format(created).toUpperCase() : o.createdAt,
+            style: const TextStyle(color: Color(0xFF94A3B8), fontSize: 11, fontWeight: FontWeight.w900, fontStyle: FontStyle.italic, letterSpacing: 1.0)),
+        if (utr.isNotEmpty) ...[
+          const SizedBox(height: 4),
+          Text('UTR: ${utr.toUpperCase()}',
+              style: const TextStyle(color: Color(0xFFCBD5E1), fontSize: 9, fontWeight: FontWeight.w900, fontStyle: FontStyle.italic, letterSpacing: 1.0)),
+        ],
+      ],
+    );
+
+    final icon = Container(
+      width: 64,
+      height: 64,
+      decoration: BoxDecoration(
+        color: const Color(0xFFF8FAFC),
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: _lightBorder, width: 1.5),
+      ),
+      alignment: Alignment.center,
+      child: Icon(assetIcon, color: AppColors.goldColor, size: 28),
+    );
+
+    return Container(
+      margin: const EdgeInsets.only(bottom: 16),
+      padding: const EdgeInsets.all(24),
+      decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(28), border: Border.all(color: _lightBorder, width: 2)),
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          // Narrow screens stack the date/UTR under the details.
+          if (constraints.maxWidth < 520) {
+            return Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                icon,
+                const SizedBox(width: 16),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      details,
+                      const SizedBox(height: 12),
+                      Align(alignment: Alignment.centerLeft, child: meta),
+                    ],
+                  ),
+                ),
+              ],
+            );
+          }
+          return Row(
+            children: [
+              icon,
+              const SizedBox(width: 20),
+              Expanded(child: details),
+              const SizedBox(width: 16),
+              meta,
+            ],
+          );
+        },
       ),
     );
   }

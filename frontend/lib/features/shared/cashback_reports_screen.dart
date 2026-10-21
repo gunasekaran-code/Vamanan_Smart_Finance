@@ -1,8 +1,22 @@
+import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart' show Clipboard, ClipboardData;
 import 'package:frontend/core/theme/app_theme.dart';
 import 'package:frontend/core/theme/confirm_dialog.dart';
 import 'package:frontend/shared/widgets/app_toast.dart';
-import 'package:frontend/shared/widgets/stat_card.dart'; // Make sure this path points to your provided StatCard widget
+import 'package:frontend/shared/widgets/report_components.dart';
+import '../../models/cashback_reports_model.dart';
+import '../../services/cashback_reports_service.dart';
+
+const _kNavy = ReportColors.navy;
+const _kGold = ReportColors.gold;
+const _kGoldCard = ReportColors.goldCard;
+const _kMuted = ReportColors.muted;
+const _kRed = ReportColors.red;
+const _kTile = ReportColors.tile;
+
+enum _HistoryTab { transactions, cycles }
 
 class CashbackReportsScreen extends StatefulWidget {
   const CashbackReportsScreen({super.key});
@@ -12,886 +26,651 @@ class CashbackReportsScreen extends StatefulWidget {
 }
 
 class _CashbackReportsScreenState extends State<CashbackReportsScreen> {
-  // Search Controller for the Registry
-  final TextEditingController _registrySearchController = TextEditingController();
-  
-  // History Tab State
-  String _activeHistoryTab = 'TRANSACTIONS';
+  final CashbackService _service = CashbackService();
+  final TextEditingController _searchController = TextEditingController();
+
+  bool _loading = true;
+  String? _error;
+  CashbackReport _report = CashbackReport.empty();
+  DateTime? _lastSync;
+
+  _HistoryTab _tab = _HistoryTab.transactions;
+  String _searchQuery = '';
+  String? _statusFilter; // null = all nodes
+
+  @override
+  void initState() {
+    super.initState();
+    _searchController.addListener(() {
+      setState(() => _searchQuery = _searchController.text.trim().toLowerCase());
+    });
+    _load();
+  }
 
   @override
   void dispose() {
-    _registrySearchController.dispose();
+    _searchController.dispose();
+    _service.dispose();
     super.dispose();
   }
 
-  // --- Handlers ---
-  void _handleRefreshProtocol() {
+  // --- Data loading ---
+
+  Future<void> _load() async {
+    setState(() {
+      _loading = true;
+      _error = null;
+    });
+    try {
+      final report = await _service.fetchReport();
+      if (!mounted) return;
+      setState(() {
+        _report = report;
+        _lastSync = DateTime.now();
+        _loading = false;
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _error = e.toString();
+        _loading = false;
+      });
+    }
+  }
+
+  Future<void> _handleRefresh() async {
+    await _load();
+    if (!mounted) return;
     ToastService.show(
-      title: 'Protocol Refreshed',
-      message: 'Cashback intelligence data synced with the global node.',
-      type: ToastType.success,
+      title: _error == null ? 'Refreshed' : 'Refresh failed',
+      message: _error ?? 'Cashback ledger synced from the server.',
+      type: _error == null ? ToastType.success : ToastType.error,
     );
   }
 
+  // --- Filtering ---
+
+  bool _matches(List<String?> fields) {
+    if (_searchQuery.isEmpty) return true;
+    return fields.whereType<String>().join(' ').toLowerCase().contains(_searchQuery);
+  }
+
+  List<CashbackTransaction> get _filteredTransactions => _report.transactions
+      .where((t) => _statusFilter == null || t.status == _statusFilter)
+      .where((t) => _matches([t.userName, t.userEmail, '#ID-${t.id}', t.description]))
+      .toList();
+
+  List<CashbackCycle> get _filteredCycles => _report.cycles
+      .where((c) => _statusFilter == null || c.status == _statusFilter)
+      .where((c) => _matches([c.userName, c.userEmail, c.transactionId, '#CY-${c.id}', c.productName, c.assetType]))
+      .toList();
+
+  List<String> get _availableStatuses {
+    final statuses = _tab == _HistoryTab.transactions
+        ? _report.transactions.map((t) => t.status)
+        : _report.cycles.map((c) => c.status);
+    return statuses.toSet().toList()..sort();
+  }
+
+  void _switchTab(_HistoryTab tab) {
+    if (_tab == tab) return;
+    setState(() {
+      _tab = tab;
+      _statusFilter = null;
+    });
+  }
+
+  // --- Export ---
+
   Future<void> _handleExportLedger() async {
+    final isTxn = _tab == _HistoryTab.transactions;
+    final count = isTxn ? _filteredTransactions.length : _filteredCycles.length;
+    if (count == 0) {
+      ToastService.show(title: 'Nothing to export', message: 'There are no rows in the current view.', type: ToastType.info);
+      return;
+    }
+
     final confirmed = await AppConfirmDialog.show(
       context: context,
       title: 'EXPORT LEDGER',
-      message: 'Generate a full data dump of the cashback node registry?',
+      message: 'Copy a CSV of the $count ${isTxn ? 'transaction' : 'cycle'}(s) currently in view to your clipboard?',
       confirmLabel: 'EXPORT',
       cancelLabel: 'CANCEL',
-      confirmButtonColor: const Color(0xFF1E3A8A),
+      confirmButtonColor: _kNavy,
     );
+    if (confirmed != true) return;
 
-    if (confirmed == true) {
-      ToastService.show(
-        title: 'Export Initiated',
-        message: 'The cashback ledger is being prepared for download.',
-        type: ToastType.success,
-      );
-    }
+    await Clipboard.setData(ClipboardData(text: isTxn ? _transactionsCsv() : _cyclesCsv()));
+    if (!mounted) return;
+    ToastService.show(title: 'Copied to clipboard', message: '$count row(s) exported as CSV.', type: ToastType.success);
   }
+
+  String _esc(Object? v) => '"${(v ?? '').toString().replaceAll('"', '""')}"';
+
+  String _transactionsCsv() {
+    final b = StringBuffer('ID,Name,Email,Net Amount,Gross,TDS,Charges,Status,Created At\n');
+    for (final t in _filteredTransactions) {
+      b.writeln([
+        t.id,
+        _esc(t.userName),
+        _esc(t.userEmail),
+        t.amount.toStringAsFixed(2),
+        t.grossAmount?.toStringAsFixed(2) ?? '',
+        t.tdsAmount?.toStringAsFixed(2) ?? '',
+        t.chargesAmount?.toStringAsFixed(2) ?? '',
+        t.status,
+        t.createdAt?.toIso8601String() ?? '',
+      ].join(','));
+    }
+    return b.toString();
+  }
+
+  String _cyclesCsv() {
+    final b = StringBuffer('ID,Name,Email,Reference,Asset,Weight (g),Total Value,Daily Payout,Paid,Status,Created At\n');
+    for (final c in _filteredCycles) {
+      b.writeln([
+        c.id,
+        _esc(c.userName),
+        _esc(c.userEmail),
+        _esc(c.transactionId),
+        _esc(c.assetType == 'product' ? c.productName : c.assetType),
+        c.weight.toStringAsFixed(3),
+        c.totalValue.toStringAsFixed(2),
+        c.dailyPayout.toStringAsFixed(2),
+        c.paidAmount.toStringAsFixed(2),
+        c.status,
+        c.createdAt?.toIso8601String() ?? '',
+      ].join(','));
+    }
+    return b.toString();
+  }
+
+  // --- Formatting ---
+
+  String _inr(double v) => formatInr(v);
+
+  String _pct(double part, double whole) => whole > 0 ? '${(part / whole * 100).toStringAsFixed(1)}%' : '0.0%';
+
+  String _cycleStatusLabel(String status) => status == 'pending' ? 'PENDING REVIEW' : status.toUpperCase();
+
+  // --- Build ---
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: const Color(0xFFF8FAFC), // Light crisp background
+      backgroundColor: _kTile,
       body: SafeArea(
-        child: SingleChildScrollView(
-          padding: const EdgeInsets.all(24.0),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              // --- 1. Global Search Bar ---
-              Container(
-                decoration: BoxDecoration(
-                  color: Colors.white,
-                  borderRadius: BorderRadius.circular(12),
-                  border: Border.all(color: AppColors.kBorder),
-                ),
-                child: const TextField(
-                  decoration: InputDecoration(
-                    hintText: 'Search users, orders, assets...',
-                    hintStyle: TextStyle(color: AppColors.kTextMuted, fontSize: 14),
-                    prefixIcon: Icon(Icons.search, color: AppColors.kTextMuted),
-                    border: InputBorder.none,
-                    contentPadding: EdgeInsets.symmetric(vertical: 16),
-                  ),
-                ),
-              ),
-              const SizedBox(height: 32),
+        child: RefreshIndicator(
+          onRefresh: _load,
+          child: LayoutBuilder(
+            builder: (context, constraints) {
+              final width = constraints.maxWidth;
+              final isMobile = width < 600;
+              final pad = isMobile ? 16.0 : 24.0;
+              final gap = isMobile ? 16.0 : 24.0;
 
-              // --- 2. Header Section ---
-              LayoutBuilder(
-                builder: (context, constraints) {
-                  bool isMobile = constraints.maxWidth < 600;
-
-                  Widget titleContent = Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Row(
-                        children: [
-                          Container(width: 32, height: 2, color: const Color(0xFFD97706)),
-                          const SizedBox(width: 8),
-                          const Text(
-                            'ANALYTICAL COMMAND NODE',
-                            style: TextStyle(
-                              fontSize: 9,
-                              fontWeight: FontWeight.w900,
-                              fontStyle: FontStyle.italic,
-                              color: Color(0xFFD97706), // Gold
-                              letterSpacing: 2,
-                            ),
+              return SingleChildScrollView(
+                physics: const AlwaysScrollableScrollPhysics(),
+                padding: EdgeInsets.all(pad),
+                child: Center(
+                  child: ConstrainedBox(
+                    constraints: const BoxConstraints(maxWidth: 1400),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        if (_error != null) ...[ReportErrorBanner(message: _error!, onRetry: _load), SizedBox(height: gap)],
+                        ReportHeader(
+                          navyTitle: 'CASHBACK',
+                          goldTitle: 'REPORTS',
+                          isMobile: isMobile,
+                          loading: _loading,
+                          lastSync: _lastSync,
+                          onRefresh: _handleRefresh,
+                        ),
+                        SizedBox(height: gap + 8),
+                        ReportOverviewRow(
+                          width: width - pad * 2,
+                          gap: gap,
+                          velocity: ReportVelocityCard(
+                            values: _report.chart.map((p) => p.totalAmount).toList(),
+                            loading: _loading,
+                            isMobile: isMobile,
+                            aggregateValue: _inr(_report.chart.fold<double>(0, (s, p) => s + p.totalAmount)),
+                            nodeCount: '${_report.summary.totalCount}',
+                            healthy: _error == null,
                           ),
-                          const SizedBox(width: 8),
-                          Container(width: 32, height: 2, color: const Color(0xFFD97706)),
-                        ],
-                      ),
-                      const SizedBox(height: 8),
-                      const Text(
-                        'CASHBACK',
-                        style: TextStyle(
-                          fontSize: 40,
-                          fontWeight: FontWeight.w900,
-                          fontStyle: FontStyle.italic,
-                          color: Color(0xFF1E3A8A), // Navy
-                          height: 0.9,
-                          letterSpacing: -1,
+                          efficiency: ReportEfficiencyCard(efficiency: _report.summary.efficiency),
+                          registry: ReportRegistryCard(registryCount: _report.summary.registryCount, onExport: _loading ? null : _handleExportLedger),
                         ),
-                      ),
-                      const Text(
-                        'REPORTS',
-                        style: TextStyle(
-                          fontSize: 40,
-                          fontWeight: FontWeight.w900,
-                          fontStyle: FontStyle.italic,
-                          color: Color(0xFFD97706), // Gold
-                          height: 0.9,
-                          letterSpacing: -1,
-                        ),
-                      ),
-                      const SizedBox(height: 12),
-                      Text(
-                        'HIGH-FIDELITY FISCAL INTELLIGENCE & ASSET OVERSIGHT',
-                        style: TextStyle(
-                          fontSize: 10,
-                          fontWeight: FontWeight.w900,
-                          fontStyle: FontStyle.italic,
-                          color: const Color(0xFF94A3B8).withOpacity(0.8),
-                          letterSpacing: 1.5,
-                        ),
-                      ),
-                    ],
-                  );
-
-                  Widget actionContent = Column(
-                    crossAxisAlignment: isMobile ? CrossAxisAlignment.start : CrossAxisAlignment.end,
-                    children: [
-                      ElevatedButton.icon(
-                        onPressed: _handleRefreshProtocol,
-                        icon: const Icon(Icons.sync, size: 16),
-                        label: const Text(
-                          'REFRESH PROTOCOL',
-                          style: TextStyle(fontWeight: FontWeight.w900, fontStyle: FontStyle.italic, fontSize: 11, letterSpacing: 1),
-                        ),
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: Colors.white,
-                          foregroundColor: const Color(0xFFD97706), // Gold text
-                          side: const BorderSide(color: Color(0xFFFDE68A)), // Light gold border
-                          padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
-                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(32)),
-                          elevation: 2,
-                          shadowColor: const Color(0xFFD97706).withOpacity(0.1),
-                        ),
-                      ),
-                      const SizedBox(height: 8),
-                      Text(
-                        'LAST UPDATED: JUST NOW',
-                        style: TextStyle(
-                          fontSize: 8,
-                          fontWeight: FontWeight.w900,
-                          fontStyle: FontStyle.italic,
-                          color: const Color(0xFF94A3B8).withOpacity(0.7),
-                          letterSpacing: 1,
-                        ),
-                      ),
-                    ],
-                  );
-
-                  if (isMobile) {
-                    return Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        titleContent,
-                        const SizedBox(height: 24),
-                        actionContent,
+                        SizedBox(height: gap),
+                        _buildNavyStats(width - pad * 2),
+                        SizedBox(height: gap),
+                        _buildDeductionBreakdown(width - pad * 2, isMobile),
+                        SizedBox(height: gap),
+                        _buildCyclePanels(width - pad * 2, gap),
+                        SizedBox(height: gap),
+                        _buildProtocolHistory(width - pad * 2, isMobile),
                       ],
-                    );
-                  }
-                  return Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    crossAxisAlignment: CrossAxisAlignment.end,
-                    children: [
-                      Expanded(child: titleContent),
-                      actionContent,
-                    ],
-                  );
-                },
-              ),
-              const SizedBox(height: 32),
-
-              // --- 3. Transmission Velocity Chart Card ---
-              _buildTransmissionVelocityCard(),
-              const SizedBox(height: 24),
-
-              // --- 4. Market Trajectory & Data Dump Row ---
-              LayoutBuilder(
-                builder: (context, constraints) {
-                  bool isMobile = constraints.maxWidth < 800;
-
-                  Widget marketCard = _buildMarketTrajectoryCard();
-                  Widget dataDumpCard = _buildGlobalDataDumpCard();
-
-                  if (isMobile) {
-                    return Column(
-                      children: [
-                        marketCard,
-                        const SizedBox(height: 24),
-                        dataDumpCard,
-                      ],
-                    );
-                  }
-                  return Row(
-                    children: [
-                      Expanded(child: marketCard),
-                      const SizedBox(width: 24),
-                      Expanded(child: dataDumpCard),
-                    ],
-                  );
-                }
-              ),
-              const SizedBox(height: 24),
-
-              // --- 5. 4-Grid Navy Stats Cards ---
-              LayoutBuilder(
-                builder: (context, constraints) {
-                  int crossAxisCount = constraints.maxWidth < 600 ? 1 : (constraints.maxWidth < 1000 ? 2 : 4);
-                  return GridView.count(
-                    crossAxisCount: crossAxisCount,
-                    crossAxisSpacing: 16,
-                    mainAxisSpacing: 16,
-                    childAspectRatio: constraints.maxWidth < 600 ? 2.5 : 1.8,
-                    shrinkWrap: true,
-                    physics: const NeverScrollableScrollPhysics(),
-                    children: [
-                      _buildNavyStatCard('TOTAL WITHDRAWALS', '₹ 0', Icons.account_balance_wallet_outlined),
-                      _buildNavyStatCard('SUCCESSFUL TRANSFERS', '₹ 0', Icons.verified_outlined),
-                      _buildNavyStatCard('FAILED PROCESSING', '₹ 0', Icons.cancel_outlined),
-                      _buildNavyStatCard('PENDING REQUESTS', '₹ 0', Icons.hourglass_empty),
-                    ],
-                  );
-                }
-              ),
-              const SizedBox(height: 24),
-
-              // --- 6. Deduction Breakdown (Using StatCard) ---
-              _buildDeductionBreakdown(),
-              const SizedBox(height: 24),
-
-              // --- 7. Active Yield & Protocol Completion ---
-              _buildActiveYieldProtocol(),
-              const SizedBox(height: 24),
-              _buildProtocolCompletion(),
-              const SizedBox(height: 24),
-
-              // --- 8. Protocol History Table (with toggles) ---
-              _buildProtocolHistoryCard(),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-
-  // --- Sub-Components ---
-
-  Widget _buildTransmissionVelocityCard() {
-    return Container(
-      padding: const EdgeInsets.all(32),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(32),
-        border: Border.all(color: AppColors.kBorder),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  const Text('TRANSMISSION\nVELOCITY', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w900, fontStyle: FontStyle.italic, color: Color(0xFF1E3A8A), height: 1.1)),
-                  const SizedBox(height: 4),
-                  Text('TEMPORAL YIELD ANALYSIS\n(30 CYCLES)', style: TextStyle(fontSize: 9, fontWeight: FontWeight.w900, fontStyle: FontStyle.italic, color: const Color(0xFF94A3B8).withOpacity(0.8), letterSpacing: 1, height: 1.3)),
-                ],
-              ),
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-                decoration: BoxDecoration(color: const Color(0xFFFFFBEB), borderRadius: BorderRadius.circular(12), border: Border.all(color: const Color(0xFFFDE68A))),
-                child: const Text('LIVE NODE\nACTIVE', textAlign: TextAlign.center, style: TextStyle(color: Color(0xFFD97706), fontSize: 8, fontWeight: FontWeight.w900, fontStyle: FontStyle.italic, letterSpacing: 0.5)),
-              ),
-            ],
-          ),
-          // Chart Placeholder
-          Container(
-            height: 200,
-            alignment: Alignment.center,
-            child: Icon(Icons.show_chart, size: 48, color: const Color(0xFFE2E8F0).withOpacity(0.5)),
-          ),
-          const SizedBox(height: 24),
-          // Footer Stats
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              _buildVelocityStat('AGGREGATE\nVALUE', '₹0', const Color(0xFF1E3A8A)),
-              _buildVelocityStat('NODE COUNT', '0', const Color(0xFF1E3A8A)),
-              _buildVelocityStat('PROTOCOL\nSTATUS', 'OPTIMAL', const Color(0xFFD97706)),
-            ],
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildVelocityStat(String label, String value, Color valueColor) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text(label, style: const TextStyle(fontSize: 8, fontWeight: FontWeight.w900, fontStyle: FontStyle.italic, color: Color(0xFF94A3B8), letterSpacing: 1, height: 1.4)),
-        const SizedBox(height: 8),
-        Text(value, style: TextStyle(fontSize: 18, fontWeight: FontWeight.w900, fontStyle: FontStyle.italic, color: valueColor)),
-      ],
-    );
-  }
-
-  Widget _buildMarketTrajectoryCard() {
-    return Container(
-      padding: const EdgeInsets.all(32),
-      decoration: BoxDecoration(
-        color: const Color(0xFFC29B38), // Mustard Gold
-        borderRadius: BorderRadius.circular(32),
-        boxShadow: [
-          BoxShadow(color: const Color(0xFFD97706).withOpacity(0.3), blurRadius: 16, offset: const Offset(0, 8)),
-        ],
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Container(
-            padding: const EdgeInsets.all(10),
-            decoration: BoxDecoration(color: Colors.white.withOpacity(0.2), shape: BoxShape.circle),
-            child: const Icon(Icons.show_chart, color: Colors.white, size: 20),
-          ),
-          const SizedBox(height: 24),
-          const Text('MARKET TRAJECTORY', style: TextStyle(fontSize: 10, fontWeight: FontWeight.w900, fontStyle: FontStyle.italic, color: Colors.white, letterSpacing: 1)),
-          const SizedBox(height: 8),
-          const Text('43.3%', style: TextStyle(fontSize: 40, fontWeight: FontWeight.w900, fontStyle: FontStyle.italic, color: Colors.white, height: 1)),
-          const SizedBox(height: 24),
-          Row(
-            children: [
-              const Icon(Icons.arrow_right, color: Colors.white, size: 14),
-              Text('INSTITUTIONAL GRADE', style: TextStyle(fontSize: 9, fontWeight: FontWeight.w900, fontStyle: FontStyle.italic, color: Colors.white.withOpacity(0.8), letterSpacing: 1.5)),
-            ],
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildGlobalDataDumpCard() {
-    return Container(
-      padding: const EdgeInsets.all(32),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(32),
-        border: Border.all(color: AppColors.kBorder),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Container(
-            padding: const EdgeInsets.all(10),
-            decoration: const BoxDecoration(color: Color(0xFFFFFBEB), shape: BoxShape.circle),
-            child: const Icon(Icons.language, color: Color(0xFFD97706), size: 20),
-          ),
-          const SizedBox(height: 24),
-          const Text('GLOBAL OPERATIONS', style: TextStyle(fontSize: 10, fontWeight: FontWeight.w900, fontStyle: FontStyle.italic, color: Color(0xFF94A3B8), letterSpacing: 1)),
-          const SizedBox(height: 8),
-          const Text('0 NODE REGISTRY', style: TextStyle(fontSize: 24, fontWeight: FontWeight.w900, fontStyle: FontStyle.italic, color: Color(0xFF1E3A8A))),
-          const SizedBox(height: 24),
-          SizedBox(
-            width: double.infinity,
-            child: ElevatedButton.icon(
-              onPressed: _handleExportLedger,
-              icon: const Icon(Icons.download, size: 14),
-              label: const Text('EXPORT LEDGER', style: TextStyle(fontWeight: FontWeight.w900, fontStyle: FontStyle.italic, fontSize: 11, letterSpacing: 1)),
-              style: ElevatedButton.styleFrom(
-                backgroundColor: const Color(0xFF1E3A8A), // Navy Blue
-                foregroundColor: Colors.white,
-                padding: const EdgeInsets.symmetric(vertical: 20),
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                elevation: 0,
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildNavyStatCard(String label, String value, IconData icon) {
-    return Container(
-      padding: const EdgeInsets.all(24),
-      decoration: BoxDecoration(
-        color: const Color(0xFF1E3A8A), // Navy Blue
-        borderRadius: BorderRadius.circular(24),
-        boxShadow: [
-          BoxShadow(color: const Color(0xFF1E3A8A).withOpacity(0.2), blurRadius: 10, offset: const Offset(0, 4)),
-        ],
-      ),
-      child: Stack(
-        children: [
-          Positioned(
-            right: 0,
-            top: 0,
-            child: Container(
-              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
-              decoration: BoxDecoration(color: const Color(0xFF112255), borderRadius: BorderRadius.circular(6)),
-              child: const Text('SYSTEM READY', style: TextStyle(color: Color(0xFF3B82F6), fontSize: 7, fontWeight: FontWeight.w900, fontStyle: FontStyle.italic)),
-            ),
-          ),
-          Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              Row(
-                children: [
-                  Container(
-                    padding: const EdgeInsets.all(8),
-                    decoration: BoxDecoration(color: Colors.white.withOpacity(0.1), borderRadius: BorderRadius.circular(8)),
-                    child: Icon(icon, color: Colors.white, size: 16),
+                    ),
                   ),
-                  const SizedBox(width: 12),
-                  Expanded(child: Text(label, style: TextStyle(fontSize: 9, fontWeight: FontWeight.w900, fontStyle: FontStyle.italic, color: Colors.white.withOpacity(0.7), letterSpacing: 0.5))),
-                ],
-              ),
-              const SizedBox(height: 16),
-              Text(value, style: const TextStyle(fontSize: 24, fontWeight: FontWeight.w900, fontStyle: FontStyle.italic, color: Colors.white)),
-            ],
+                ),
+              );
+            },
           ),
-        ],
+        ),
       ),
     );
   }
 
-  Widget _buildDeductionBreakdown() {
+  // --- Navy stat cards ---
+
+  Widget _buildNavyStats(double width) {
+    final s = _report.summary;
+    final c = _report.cyclesSummary;
+    double ratio(num part, num whole) => whole > 0 ? (part / whole).clamp(0, 1).toDouble() : 0;
+
+    final cards = [
+      _navyStatCard('MONTHLY CASHBACK', "THIS MONTH'S LIVE VALUE", s.monthlyAmount, Icons.bolt, ratio(s.monthlyAmount, s.totalAmount)),
+      _navyStatCard('PENDING CASHBACK', 'AWAITING VALIDATION', s.pendingAmount, Icons.schedule, ratio(s.pendingAmount, s.totalAmount)),
+      _navyStatCard('COMPLETED CYCLES', 'SUCCESSFULLY CLOSED', c.completedCycles.toDouble(), Icons.check_circle_outline, ratio(c.completedCycles, c.totalCycles), isCount: true),
+      _navyStatCard('TOTAL PAYOUT', 'LIFETIME DISTRIBUTION', s.successAmount, Icons.workspace_premium_outlined, ratio(s.successAmount, s.totalAmount)),
+    ];
+    final columns = width < 600 ? 1 : (width < 1000 ? 2 : 4);
+    return _grid(cards, columns, spacing: 16);
+  }
+
+  Widget _navyStatCard(String label, String subtitle, double value, IconData icon, double progress, {bool isCount = false}) {
     return Container(
-      padding: const EdgeInsets.all(32),
+      padding: const EdgeInsets.all(20),
       decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(32),
-        border: Border.all(color: AppColors.kBorder),
+        color: _kNavy,
+        borderRadius: BorderRadius.circular(28),
+        boxShadow: [BoxShadow(color: _kNavy.withValues(alpha: 0.25), blurRadius: 12, offset: const Offset(0, 6))],
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
+          Align(
+            alignment: Alignment.topRight,
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+              decoration: BoxDecoration(color: Colors.white.withValues(alpha: 0.1), borderRadius: BorderRadius.circular(10)),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
                 children: [
-                  const Text('DEDUCTION BREAKDOWN', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w900, fontStyle: FontStyle.italic, color: Color(0xFF1E3A8A))),
-                  const SizedBox(height: 4),
-                  Text('AUTO-COMPUTED TDS + SERVICE CHARGES', style: TextStyle(fontSize: 9, fontWeight: FontWeight.w900, fontStyle: FontStyle.italic, color: const Color(0xFF94A3B8).withOpacity(0.8), letterSpacing: 1)),
+                  Container(width: 4, height: 4, decoration: const BoxDecoration(color: Color(0xFFFBBF24), shape: BoxShape.circle)),
+                  const SizedBox(width: 4),
+                  const Text('MARKET LIVE', style: TextStyle(color: Color(0xFFFBBF24), fontSize: 6, fontWeight: FontWeight.w900, fontStyle: FontStyle.italic, letterSpacing: 0.5)),
                 ],
               ),
-              Container(
-                padding: const EdgeInsets.all(8),
-                decoration: BoxDecoration(color: const Color(0xFFFEF2F2), borderRadius: BorderRadius.circular(8)),
-                child: const Icon(Icons.trending_down, color: Color(0xFFEF4444), size: 16),
-              ),
-            ],
-          ),
-          const SizedBox(height: 32),
-          LayoutBuilder(
-  builder: (context, constraints) {
-    final screenWidth = constraints.maxWidth;
-    final isSmallMobile = screenWidth < 380;
-    int crossAxisCount = screenWidth < 600 ? 1 : (screenWidth < 900 ? 2 : 3);
-    
-    return GridView.count(
-      crossAxisCount: crossAxisCount,
-      crossAxisSpacing: isSmallMobile ? 8.0 : 16.0,
-      mainAxisSpacing: isSmallMobile ? 8.0 : 16.0,
-      childAspectRatio: screenWidth < 600 ? (isSmallMobile ? 2.2 : 2.5) : 2.2,
-      shrinkWrap: true,
-      physics: const NeverScrollableScrollPhysics(),
-      children: const [
-        StatCard(
-          label: 'GROSS INCENTIVE',
-          value: '₹0',
-          badgeText: 'BEFORE DEDUCTIONS',
-          icon: Icons.account_balance_wallet,
-          color: Color(0xFF1E3A8A),
-          backgroundColor: Color(0xFFF0F7FF),
-          borderColor: Color(0xFFBFDBFE),
-          badgeBackgroundColor: Color(0xFFDBEAFE),
-          badgeTextColor: Color(0xFF1D4ED8),
-        ),
-        StatCard(
-          label: 'TDS WITHHELD',
-          value: '₹0',
-          badgeText: '0.0% OF GROSS',
-          icon: Icons.money_off,
-          color: Color(0xFFEF4444),
-          backgroundColor: Color(0xFFFEF2F2),
-          borderColor: Color(0xFFFECACA),
-          badgeBackgroundColor: Color(0xFFFEE2E2),
-          badgeTextColor: Color(0xFFDC2626),
-        ),
-        StatCard(
-          label: 'SERVICE CHARGES',
-          value: '₹0',
-          badgeText: '0.0% OF GROSS',
-          icon: Icons.receipt_long,
-          color: Color(0xFFEF4444),
-          backgroundColor: Color(0xFFFEF2F2),
-          borderColor: Color(0xFFFECACA),
-          badgeBackgroundColor: Color(0xFFFEE2E2),
-          badgeTextColor: Color(0xFFDC2626),
-        ),
-        StatCard(
-          label: 'TOTAL DEDUCTION',
-          value: '₹0',
-          badgeText: '0.0% WITHHELD',
-          icon: Icons.trending_down,
-          color: Color(0xFFD97706),
-          backgroundColor: AppColors.goldBg,
-          borderColor: AppColors.goldBorder,
-          badgeBackgroundColor: AppColors.goldBadgeBg,
-          badgeTextColor: AppColors.goldColor,
-        ),
-        StatCard(
-          label: 'NET CREDITED',
-          value: '₹0',
-          badgeText: 'PAID TO WALLETS',
-          icon: Icons.check_circle_outline,
-          color: Color(0xFF10B981),
-          backgroundColor: Color(0xFFECFDF5),
-          borderColor: Color(0xFFA7F3D0),
-          badgeBackgroundColor: Color(0xFFD1FAE5),
-          badgeTextColor: Color(0xFF047857),
-        ),
-      ],
-    );
-  },
-),
-
-        ],
-      ),
-    );
-  }
-
-  Widget _buildActiveYieldProtocol() {
-    return Container(
-      padding: const EdgeInsets.all(32),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(32),
-        border: Border.all(color: AppColors.kBorder),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              const Text('ACTIVE YIELD PROTOCOL', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w900, fontStyle: FontStyle.italic, color: Color(0xFF1E3A8A))),
-              Container(
-                padding: const EdgeInsets.all(8),
-                decoration: BoxDecoration(color: const Color(0xFFFFFBEB), borderRadius: BorderRadius.circular(8)),
-                child: const Icon(Icons.bolt, color: Color(0xFFD97706), size: 16),
-              ),
-            ],
-          ),
-          const SizedBox(height: 32),
-          Row(
-            crossAxisAlignment: CrossAxisAlignment.end,
-            children: [
-              const Text('0', style: TextStyle(fontSize: 48, fontWeight: FontWeight.w900, fontStyle: FontStyle.italic, color: Color(0xFF1E3A8A), height: 1)),
-              const SizedBox(width: 16),
-              Padding(
-                padding: const EdgeInsets.only(bottom: 8.0),
-                child: Text('ACTIVE DISBURSING', style: TextStyle(fontSize: 10, fontWeight: FontWeight.w900, fontStyle: FontStyle.italic, color: const Color(0xFF94A3B8).withOpacity(0.8), letterSpacing: 1)),
-              ),
-            ],
-          ),
-          const SizedBox(height: 32),
-          Row(
-            children: [
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text('MONTHLY YIELD / NODE', style: TextStyle(fontSize: 9, fontWeight: FontWeight.w900, fontStyle: FontStyle.italic, color: const Color(0xFF94A3B8).withOpacity(0.8), letterSpacing: 1)),
-                    const SizedBox(height: 8),
-                    const Text('₹0', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w900, fontStyle: FontStyle.italic, color: Color(0xFF1E3A8A))),
-                  ],
-                ),
-              ),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text('TOTAL DISBURSED (EST.)', style: TextStyle(fontSize: 9, fontWeight: FontWeight.w900, fontStyle: FontStyle.italic, color: const Color(0xFF94A3B8).withOpacity(0.8), letterSpacing: 1)),
-                    const SizedBox(height: 8),
-                    const Text('₹ 0 / ₹ 0', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w900, fontStyle: FontStyle.italic, color: Color(0xFF1E3A8A))),
-                  ],
-                ),
-              ),
-            ],
-          )
-        ],
-      ),
-    );
-  }
-
-  Widget _buildProtocolCompletion() {
-    return Container(
-      padding: const EdgeInsets.all(32),
-      decoration: BoxDecoration(
-        color: const Color(0xFF1E3A8A), // Navy Blue
-        borderRadius: BorderRadius.circular(32),
-        boxShadow: [
-          BoxShadow(color: const Color(0xFF1E3A8A).withOpacity(0.3), blurRadius: 20, offset: const Offset(0, 10)),
-        ],
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              const Text('PROTOCOL COMPLETION', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w900, fontStyle: FontStyle.italic, color: Colors.white)),
-              Container(
-                padding: const EdgeInsets.all(8),
-                decoration: BoxDecoration(color: Colors.white.withOpacity(0.1), borderRadius: BorderRadius.circular(8)),
-                child: const Icon(Icons.check_circle_outline, color: Colors.white, size: 16),
-              ),
-            ],
+            ),
           ),
           const SizedBox(height: 4),
-          Text('COMPLETED NODES (10/10 CYCLES MET)', style: TextStyle(fontSize: 9, fontWeight: FontWeight.w900, fontStyle: FontStyle.italic, color: Colors.white.withOpacity(0.6), letterSpacing: 1)),
-          const SizedBox(height: 32),
           Row(
-            crossAxisAlignment: CrossAxisAlignment.end,
             children: [
-              const Text('0', style: TextStyle(fontSize: 48, fontWeight: FontWeight.w900, fontStyle: FontStyle.italic, color: Colors.white, height: 1)),
-              const SizedBox(width: 16),
-              Padding(
-                padding: const EdgeInsets.only(bottom: 8.0),
-                child: Text('NODES MATURED', style: TextStyle(fontSize: 10, fontWeight: FontWeight.w900, fontStyle: FontStyle.italic, color: const Color(0xFFFBBF24), letterSpacing: 1)), // Gold text
+              Container(
+                padding: const EdgeInsets.all(8),
+                decoration: BoxDecoration(
+                  color: Colors.white.withValues(alpha: 0.08),
+                  borderRadius: BorderRadius.circular(10),
+                  border: Border.all(color: Colors.white.withValues(alpha: 0.12)),
+                ),
+                child: Icon(icon, color: const Color(0xFFFBBF24), size: 16),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(label, style: TextStyle(fontSize: 8, fontWeight: FontWeight.w900, fontStyle: FontStyle.italic, color: Colors.white.withValues(alpha: 0.6), letterSpacing: 1)),
+                    const SizedBox(height: 2),
+                    Text(subtitle, maxLines: 1, overflow: TextOverflow.ellipsis, style: TextStyle(fontSize: 6, fontWeight: FontWeight.w900, fontStyle: FontStyle.italic, color: Colors.white.withValues(alpha: 0.35), letterSpacing: 0.5)),
+                  ],
+                ),
               ),
             ],
           ),
-          const SizedBox(height: 32),
-          Container(
-            padding: const EdgeInsets.all(16),
-            decoration: BoxDecoration(
-              color: Colors.white.withOpacity(0.05),
-              borderRadius: BorderRadius.circular(16),
-              border: Border.all(color: Colors.white.withOpacity(0.1)),
+          const SizedBox(height: 20),
+          FittedBox(
+            fit: BoxFit.scaleDown,
+            alignment: Alignment.centerLeft,
+            child: Text.rich(
+              TextSpan(children: [
+                if (!isCount) TextSpan(text: '₹ ', style: TextStyle(fontSize: 18, color: Colors.white.withValues(alpha: 0.5))),
+                TextSpan(text: isCount ? value.toInt().toString() : formatInrDigits(value)),
+              ]),
+              style: const TextStyle(fontSize: 26, fontWeight: FontWeight.w900, fontStyle: FontStyle.italic, color: Colors.white),
             ),
-            child: Row(
-              children: [
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text('OVERALL COMPLETION RATE', style: TextStyle(fontSize: 8, fontWeight: FontWeight.w900, fontStyle: FontStyle.italic, color: Colors.white.withOpacity(0.6), letterSpacing: 1)),
-                      const SizedBox(height: 8),
-                      const Text('00.0%', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w900, fontStyle: FontStyle.italic, color: Colors.white)),
-                    ],
-                  ),
-                ),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text('LIFETIME DISBURSED', style: TextStyle(fontSize: 8, fontWeight: FontWeight.w900, fontStyle: FontStyle.italic, color: Colors.white.withOpacity(0.6), letterSpacing: 1)),
-                      const SizedBox(height: 8),
-                      const Text('₹0', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w900, fontStyle: FontStyle.italic, color: Colors.white)),
-                    ],
-                  ),
-                ),
-              ],
+          ),
+          const SizedBox(height: 16),
+          ClipRRect(
+            borderRadius: BorderRadius.circular(4),
+            child: LinearProgressIndicator(
+              value: progress,
+              minHeight: 4,
+              backgroundColor: Colors.white.withValues(alpha: 0.1),
+              valueColor: const AlwaysStoppedAnimation(_kGoldCard),
             ),
-          )
+          ),
         ],
       ),
     );
   }
 
-  Widget _buildProtocolHistoryCard() {
+  // --- Deduction breakdown ---
+
+  Widget _buildDeductionBreakdown(double width, bool isMobile) {
+    final s = _report.summary;
+    final tiles = [
+      _deductionTile('GROSS INCENTIVE', _inr(s.grossAmount), 'BEFORE DEDUCTIONS', _kNavy, 1),
+      _deductionTile('TDS WITHHELD', _inr(s.tdsAmount), '${_pct(s.tdsAmount, s.grossAmount)} OF GROSS', _kRed, 0.15),
+      _deductionTile('SERVICE CHARGES', _inr(s.chargesAmount), '${_pct(s.chargesAmount, s.grossAmount)} OF GROSS', _kRed, 0.15),
+      _deductionTile('TOTAL DEDUCTION', _inr(s.totalDeduction), '${_pct(s.totalDeduction, s.grossAmount)} WITHHELD', _kRed, 0.25),
+      _deductionTile('NET CREDITED', _inr(s.netAmount), 'PAID TO WALLETS', _kGoldCard, 0.85),
+    ];
+    final columns = width < 520 ? 1 : (width < 900 ? 2 : (width < 1150 ? 3 : 5));
+
     return Container(
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(32),
-        border: Border.all(color: AppColors.kBorder),
-      ),
+      padding: EdgeInsets.all(isMobile ? 20 : 32),
+      decoration: reportWhiteCard(),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          // Header Section
-          Padding(
-            padding: const EdgeInsets.all(32.0),
-            child: LayoutBuilder(
-              builder: (context, constraints) {
-                bool isMobile = constraints.maxWidth < 800;
-                
-                Widget titleArea = Row(
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Container(
-                      padding: const EdgeInsets.all(12),
-                      decoration: BoxDecoration(color: const Color(0xFFFFFBEB), borderRadius: BorderRadius.circular(12)), // Light gold tint
-                      child: const Icon(Icons.bolt, color: Color(0xFFD97706), size: 24), // Gold bolt
-                    ),
-                    const SizedBox(width: 16),
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          const Text('PROTOCOL HISTORY', style: TextStyle(fontSize: 18, fontWeight: FontWeight.w900, fontStyle: FontStyle.italic, color: Color(0xFF1E3A8A), height: 1.1)),
-                          const SizedBox(height: 4),
-                          Text('IMMUTABLE TRANSACTION REGISTRY', style: TextStyle(fontSize: 8, fontWeight: FontWeight.w900, fontStyle: FontStyle.italic, color: const Color(0xFF94A3B8).withOpacity(0.8), letterSpacing: 0.5)),
-                        ],
-                      ),
-                    ),
+                    ReportCardTitle('DEDUCTION BREAKDOWN'),
+                    SizedBox(height: 4),
+                    ReportCardSubtitle('AUTO-COMPUTED TDS + SERVICE CHARGES · LIVE FROM LEDGER'),
                   ],
-                );
-
-                Widget toggleArea = Container(
-                  decoration: BoxDecoration(
-                    color: const Color(0xFFF1F5F9), // Light gray background
-                    borderRadius: BorderRadius.circular(12),
-                  ),
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      _buildHistoryTab('TRANSACTIONS'),
-                      _buildHistoryTab('CYCLES'),
-                    ],
-                  ),
-                );
-
-                Widget searchArea = Row(
-                  children: [
-                    Expanded(
-                      child: SizedBox(
-                        height: 40,
-                        child: TextField(
-                          controller: _registrySearchController,
-                          style: const TextStyle(fontSize: 12),
-                          decoration: InputDecoration(
-                            hintText: 'SEARCH IDENTITY...',
-                            hintStyle: const TextStyle(color: AppColors.kTextMuted, fontSize: 10, fontStyle: FontStyle.italic, fontWeight: FontWeight.w900),
-                            prefixIcon: const Icon(Icons.search, size: 16, color: AppColors.kTextMuted),
-                            border: OutlineInputBorder(borderRadius: BorderRadius.circular(8), borderSide: const BorderSide(color: AppColors.kBorder)),
-                            contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 0),
-                          ),
-                        ),
-                      ),
-                    ),
-                    const SizedBox(width: 12),
-                    Container(
-                      height: 40,
-                      padding: const EdgeInsets.symmetric(horizontal: 16),
-                      decoration: BoxDecoration(border: Border.all(color: AppColors.kBorder), borderRadius: BorderRadius.circular(8)),
-                      child: const Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          Icon(Icons.filter_list, size: 16, color: AppColors.kTextMuted),
-                          SizedBox(width: 8),
-                          Text('ALL NODES', style: TextStyle(fontSize: 10, fontWeight: FontWeight.w900, fontStyle: FontStyle.italic, color: Color(0xFF1E3A8A))),
-                        ],
-                      ),
-                    )
-                  ],
-                );
-
-                if (isMobile) {
-                  return Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      titleArea,
-                      const SizedBox(height: 24),
-                      toggleArea,
-                      const SizedBox(height: 24),
-                      searchArea,
-                    ],
-                  );
-                }
-                
-                // Desktop row structure mapping to image_e92c81.png
-                return Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                  children: [
-                    Expanded(flex: 3, child: titleArea),
-                    const SizedBox(width: 16),
-                    toggleArea,
-                    const SizedBox(width: 32),
-                    Expanded(flex: 4, child: searchArea),
-                  ],
-                );
-              }
-            ),
-          ),
-          
-          const Divider(height: 1, color: AppColors.kBorder),
-
-          // Scrollable Table Header (matches image_e92c81.png)
-          SingleChildScrollView(
-            scrollDirection: Axis.horizontal,
-            child: ConstrainedBox(
-              constraints: BoxConstraints(minWidth: MediaQuery.of(context).size.width - 48),
-              child: DataTable(
-                columnSpacing: 48,
-                headingRowHeight: 56,
-                dataRowMinHeight: 72,
-                dataRowMaxHeight: 72,
-                headingRowColor: WidgetStateProperty.all(const Color(0xFFF8FAFC)),
-                dividerThickness: 0,
-                headingTextStyle: const TextStyle(fontWeight: FontWeight.w900, fontStyle: FontStyle.italic, color: Color(0xFF94A3B8), fontSize: 9, letterSpacing: 1.5),
-                columns: const [
-                  DataColumn(label: Text('ENTITY NODE')),
-                  DataColumn(label: Text('PROTOCOL REF')),
-                  DataColumn(label: Text('VALUE (₹)')),
-                  DataColumn(label: Text('STATUS')),
-                  DataColumn(label: Text('TIMESTAMP')),
-                ],
-                rows: const [], // Empty state as per reference image
+                ),
               ),
-            ),
-          ),
-          
-          const Divider(height: 1, color: AppColors.kBorder),
-
-          // Empty State Area
-          Container(
-            padding: const EdgeInsets.symmetric(vertical: 80, horizontal: 24),
-            alignment: Alignment.center,
-            child: const Text(
-              'NO REGISTRY ENTRIES FOUND',
-              style: TextStyle(
-                fontSize: 10,
-                fontWeight: FontWeight.w900,
-                fontStyle: FontStyle.italic,
-                color: Color(0xFFCBD5E1),
-                letterSpacing: 2,
+              Container(
+                padding: const EdgeInsets.all(10),
+                decoration: BoxDecoration(color: const Color(0xFFFEF2F2), borderRadius: BorderRadius.circular(10)),
+                child: const Icon(Icons.trending_down, color: _kRed, size: 16),
               ),
-              textAlign: TextAlign.center,
-            ),
+            ],
+          ),
+          const SizedBox(height: 24),
+          _grid(tiles, columns, spacing: 12),
+        ],
+      ),
+    );
+  }
+
+  Widget _deductionTile(String label, String value, String caption, Color color, double barFraction) {
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(color: _kTile, borderRadius: BorderRadius.circular(16), border: Border.all(color: AppColors.kBorder)),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(label, style: const TextStyle(fontSize: 7, fontWeight: FontWeight.w900, fontStyle: FontStyle.italic, color: _kMuted, letterSpacing: 1)),
+          const SizedBox(height: 8),
+          FittedBox(
+            fit: BoxFit.scaleDown,
+            alignment: Alignment.centerLeft,
+            child: Text(value, style: TextStyle(fontSize: 18, fontWeight: FontWeight.w900, fontStyle: FontStyle.italic, color: color)),
+          ),
+          const SizedBox(height: 8),
+          FractionallySizedBox(
+            widthFactor: barFraction,
+            alignment: Alignment.centerLeft,
+            child: Container(height: 2, color: color),
+          ),
+          const SizedBox(height: 10),
+          Text(caption, style: const TextStyle(fontSize: 7, fontWeight: FontWeight.w900, fontStyle: FontStyle.italic, color: _kMuted, letterSpacing: 1)),
+        ],
+      ),
+    );
+  }
+
+  // --- Active yield / completion panels ---
+
+  Widget _buildCyclePanels(double width, double gap) {
+    final active = _buildActiveYieldCard(width < 600);
+    final completion = _buildCompletionCard(width < 600);
+    if (width < 800) {
+      return Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [active, SizedBox(height: gap), completion]);
+    }
+    return IntrinsicHeight(
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [Expanded(child: active), SizedBox(width: gap), Expanded(child: completion)],
+      ),
+    );
+  }
+
+  Widget _buildActiveYieldCard(bool isMobile) {
+    final c = _report.cyclesSummary;
+    return Container(
+      padding: EdgeInsets.all(isMobile ? 20 : 28),
+      decoration: reportWhiteCard(),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          _panelHeader('ACTIVE YIELD PROTOCOL', 'ONGOING CASHBACK CYCLES', Icons.bolt, _kNavy, _kMuted, const Color(0xFFFFFBEB), _kGold),
+          const SizedBox(height: 20),
+          _bigCountRow('${c.activeCycles}', _kNavy, 'Live Processing', Icons.show_chart, const Color(0xFFFFFBEB), _kGold),
+          const SizedBox(height: 20),
+          Row(
+            children: [
+              Expanded(child: _miniBox('DAILY LIABILITY', _inr(c.dailyLiability), dark: false)),
+              const SizedBox(width: 12),
+              Expanded(child: _miniBox('PENDING VERIFICATION', '${c.pendingCycles} Cycles', dark: false)),
+            ],
           ),
         ],
       ),
     );
   }
 
-  Widget _buildHistoryTab(String title) {
-    bool isActive = _activeHistoryTab == title;
+  Widget _buildCompletionCard(bool isMobile) {
+    final c = _report.cyclesSummary;
+    final txns = _report.transactions;
+    final completedTxns = txns.where((t) => t.status == 'completed').length;
+    final successRate = txns.isEmpty ? 0.0 : completedTxns / txns.length * 100;
+    final closed = _report.cycles.where((cy) => cy.status == 'completed').toList();
+    final avgPayout = closed.isEmpty ? 0.0 : closed.fold<double>(0, (s, cy) => s + cy.paidAmount) / closed.length;
+
+    return Container(
+      padding: EdgeInsets.all(isMobile ? 20 : 28),
+      decoration: BoxDecoration(
+        color: _kNavy,
+        borderRadius: BorderRadius.circular(32),
+        boxShadow: [BoxShadow(color: _kNavy.withValues(alpha: 0.3), blurRadius: 20, offset: const Offset(0, 10))],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          _panelHeader('PROTOCOL COMPLETION', 'SUCCESSFULLY CLOSED CYCLES', Icons.check_circle_outline, const Color(0xFFFBBF24),
+              Colors.white.withValues(alpha: 0.45), Colors.white.withValues(alpha: 0.1), const Color(0xFFFBBF24)),
+          const SizedBox(height: 20),
+          _bigCountRow('${c.completedCycles}', Colors.white, 'Mission Success', Icons.emoji_events_outlined, Colors.white.withValues(alpha: 0.1), const Color(0xFFFBBF24)),
+          const SizedBox(height: 20),
+          Row(
+            children: [
+              Expanded(child: _miniBox('SUCCESS RATE', '${successRate.toStringAsFixed(1)}%', dark: true)),
+              const SizedBox(width: 12),
+              Expanded(child: _miniBox('AVERAGE PAYOUT', _inr(avgPayout), dark: true)),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _panelHeader(String title, String subtitle, IconData icon, Color titleColor, Color subColor, Color iconBg, Color iconColor) {
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(title, style: TextStyle(fontSize: 15, fontWeight: FontWeight.w900, fontStyle: FontStyle.italic, color: titleColor, letterSpacing: -0.3)),
+              const SizedBox(height: 4),
+              Text(subtitle, style: TextStyle(fontSize: 8, fontWeight: FontWeight.w900, fontStyle: FontStyle.italic, color: subColor, letterSpacing: 1)),
+            ],
+          ),
+        ),
+        Container(
+          padding: const EdgeInsets.all(10),
+          decoration: BoxDecoration(color: iconBg, borderRadius: BorderRadius.circular(12)),
+          child: Icon(icon, color: iconColor, size: 18),
+        ),
+      ],
+    );
+  }
+
+  Widget _bigCountRow(String count, Color color, String chip, IconData chipIcon, Color chipBg, Color chipFg) {
+    return Wrap(
+      crossAxisAlignment: WrapCrossAlignment.center,
+      spacing: 12,
+      runSpacing: 8,
+      children: [
+        Text(count, style: TextStyle(fontSize: 40, fontWeight: FontWeight.w900, fontStyle: FontStyle.italic, color: color, height: 1)),
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+          decoration: BoxDecoration(color: chipBg, borderRadius: BorderRadius.circular(20), border: Border.all(color: chipFg.withValues(alpha: 0.3))),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(chipIcon, size: 10, color: chipFg),
+              const SizedBox(width: 4),
+              Text(chip, style: TextStyle(fontSize: 9, fontWeight: FontWeight.w800, fontStyle: FontStyle.italic, color: chipFg)),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _miniBox(String label, String value, {required bool dark}) {
+    return Container(
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: dark ? Colors.white.withValues(alpha: 0.06) : Colors.white,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: dark ? Colors.white.withValues(alpha: 0.12) : AppColors.kBorder),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(label, maxLines: 1, overflow: TextOverflow.ellipsis,
+              style: TextStyle(fontSize: 7, fontWeight: FontWeight.w900, fontStyle: FontStyle.italic, color: dark ? Colors.white.withValues(alpha: 0.5) : _kMuted, letterSpacing: 1)),
+          const SizedBox(height: 6),
+          FittedBox(
+            fit: BoxFit.scaleDown,
+            alignment: Alignment.centerLeft,
+            child: Text(value, style: TextStyle(fontSize: 15, fontWeight: FontWeight.w900, fontStyle: FontStyle.italic, color: dark ? Colors.white : _kNavy)),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // --- Protocol history (TRANSACTIONS / CYCLES) ---
+
+  Widget _buildProtocolHistory(double width, bool isMobile) {
+    final isTxn = _tab == _HistoryTab.transactions;
+    final rows = isTxn
+        ? _filteredTransactions
+            .map((t) => ReportHistoryRow(
+                  name: t.userName,
+                  email: t.userEmail,
+                  ref: '#ID-${t.id}',
+                  value: _inr(t.amount),
+                  valueDetail: deductionLine(gross: t.grossAmount, tds: t.tdsAmount, charges: t.chargesAmount),
+                  statusLabel: t.status.toUpperCase(),
+                  statusKey: t.status,
+                  timestamp: t.createdAt,
+                ))
+            .toList()
+        : _filteredCycles
+            .map((c) => ReportHistoryRow(
+                  name: c.userName,
+                  email: c.userEmail,
+                  ref: c.transactionId ?? '#CY-${c.id}',
+                  refDetail: _cycleAssetLine(c),
+                  value: _inr(c.totalValue),
+                  valueDetail: 'DAILY: ${_inr(c.dailyPayout)}',
+                  valueDetailColor: _kMuted,
+                  statusLabel: _cycleStatusLabel(c.status),
+                  statusKey: c.status,
+                  timestamp: c.createdAt,
+                ))
+            .toList();
+
+    return ReportHistoryCard(
+      width: width,
+      isMobile: isMobile,
+      loading: _loading,
+      searchController: _searchController,
+      rows: rows,
+      tabs: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          _tabChip('TRANSACTIONS', _HistoryTab.transactions),
+          const SizedBox(width: 8),
+          _tabChip('CYCLES', _HistoryTab.cycles),
+        ],
+      ),
+      filter: ReportStatusFilter(
+        selected: _statusFilter,
+        options: {for (final s in _availableStatuses) s: isTxn ? s.toUpperCase() : _cycleStatusLabel(s)},
+        onChanged: (v) => setState(() => _statusFilter = v),
+      ),
+    );
+  }
+
+  Widget _tabChip(String label, _HistoryTab tab) {
+    final active = _tab == tab;
     return InkWell(
-      onTap: () => setState(() => _activeHistoryTab = title),
-      borderRadius: BorderRadius.circular(12),
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+      onTap: () => _switchTab(tab),
+      borderRadius: BorderRadius.circular(8),
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 180),
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 7),
         decoration: BoxDecoration(
-          color: isActive ? const Color(0xFFD97706) : Colors.transparent, // Gold background if active
-          borderRadius: BorderRadius.circular(12),
+          color: active ? _kGoldCard : const Color(0xFFF1F5F9),
+          borderRadius: BorderRadius.circular(8),
+          boxShadow: active ? [BoxShadow(color: _kGoldCard.withValues(alpha: 0.35), blurRadius: 10, offset: const Offset(0, 4))] : null,
         ),
         child: Text(
-          title,
-          style: TextStyle(
-            fontSize: 10,
-            fontWeight: FontWeight.w900,
-            fontStyle: FontStyle.italic,
-            color: isActive ? Colors.white : const Color(0xFF64748B),
-            letterSpacing: 1,
-          ),
+          label,
+          style: TextStyle(fontSize: 9, fontWeight: FontWeight.w900, color: active ? Colors.white : const Color(0xFF475569), letterSpacing: 1.5),
         ),
       ),
     );
+  }
+
+  String? _cycleAssetLine(CashbackCycle c) {
+    if (c.assetType == 'product') return c.productName == null ? 'PRODUCT' : 'PRODUCT (${c.productName!.toUpperCase()})';
+    return '${c.assetType.toUpperCase()} (${c.weight.toStringAsFixed(3)}G)';
+  }
+
+  // --- Small shared pieces ---
+
+  /// Equal-width, equal-height grid without GridView's fixed aspect ratio,
+  /// so cards grow with their content instead of overflowing.
+  Widget _grid(List<Widget> children, int columns, {double spacing = 16}) {
+    final rows = <Widget>[];
+    for (var i = 0; i < children.length; i += columns) {
+      final end = math.min(i + columns, children.length);
+      final cells = <Widget>[];
+      for (var j = i; j < i + columns; j++) {
+        if (j > i) cells.add(SizedBox(width: spacing));
+        cells.add(Expanded(child: j < end ? children[j] : const SizedBox.shrink()));
+      }
+      if (rows.isNotEmpty) rows.add(SizedBox(height: spacing));
+      rows.add(IntrinsicHeight(child: Row(crossAxisAlignment: CrossAxisAlignment.stretch, children: cells)));
+    }
+    return Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: rows);
   }
 }

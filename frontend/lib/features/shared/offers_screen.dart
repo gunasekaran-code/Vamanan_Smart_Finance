@@ -3,27 +3,9 @@ import 'package:frontend/core/theme/app_theme.dart';
 import 'package:frontend/core/theme/confirm_dialog.dart';
 import 'package:frontend/shared/widgets/app_toast.dart';
 import 'package:intl/intl.dart';
-
-// --- Data Model ---
-class AppOffer {
-  final String id;
-  final String title;
-  final String details;
-  final String category;
-  final String expiryDate;
-  final Color accentColor;
-  bool isHidden;
-
-  AppOffer({
-    required this.id,
-    required this.title,
-    required this.details,
-    required this.category,
-    required this.expiryDate,
-    required this.accentColor,
-    this.isHidden = false,
-  });
-}
+import '../../models/offer_model.dart';
+import '../../services/offer_service.dart';
+import 'package:frontend/shared/widgets/app_loader.dart';
 
 class OffersScreen extends StatefulWidget {
   const OffersScreen({super.key});
@@ -33,42 +15,34 @@ class OffersScreen extends StatefulWidget {
 }
 
 class _OffersScreenState extends State<OffersScreen> {
-  // Form Controllers
   final TextEditingController _titleController = TextEditingController();
   final TextEditingController _detailsController = TextEditingController();
-  final TextEditingController _dateController = TextEditingController(text: '02/09/2026');
-  
+  final TextEditingController _dateController = TextEditingController();
+
+  DateTime? _selectedDate;
   String _selectedCategory = 'FESTIVAL';
   final List<String> _categories = ['FESTIVAL', 'PROMO', 'ANNOUNCEMENT'];
 
-  // Color Picker State
   final List<Color> _accentColors = [
-    const Color(0xFF60A5FA), // Blue
-    const Color(0xFFD97706), // Gold/Amber
-    const Color(0xFF34D399), // Green
-    const Color(0xFFFB7185), // Pink/Rose
-    const Color(0xFFC084FC), // Purple
+    const Color(0xFF60A5FA), // blue
+    const Color(0xFFD97706), // amber
+    const Color(0xFF34D399), // emerald
+    const Color(0xFFFB7185), // red/rose
+    const Color(0xFFC084FC), // purple
   ];
   late Color _selectedColor;
 
   bool _showSuccessHint = false;
+  bool _isLoading = true;
+  bool _isPublishing = false;
 
-  // Mock Active Offers List
-  final List<AppOffer> _activeOffers = [
-    AppOffer(
-      id: '1',
-      title: 'demo offer',
-      details: 'demo',
-      category: 'FESTIVAL',
-      expiryDate: '2/9/2026',
-      accentColor: const Color(0xFF34D399), // Green
-    )
-  ];
+  List<AppOffer> _activeOffers = [];
 
   @override
   void initState() {
     super.initState();
-    _selectedColor = _accentColors[1]; // Default to Gold
+    _selectedColor = _accentColors[1];
+    _loadOffers();
   }
 
   @override
@@ -79,7 +53,19 @@ class _OffersScreenState extends State<OffersScreen> {
     super.dispose();
   }
 
-  // --- Handlers ---
+  Future<void> _loadOffers() async {
+    setState(() => _isLoading = true);
+    try {
+      final offers = await OfferService.instance.fetchOffers();
+      if (mounted) setState(() => _activeOffers = offers);
+    } catch (e) {
+      if (mounted) {
+        ToastService.show(title: 'Error', message: 'Could not load offers: $e', type: ToastType.error);
+      }
+    } finally {
+      if (mounted) setState(() => _isLoading = false);
+    }
+  }
 
   Future<void> _handleProcessYield() async {
     final confirmed = await AppConfirmDialog.show(
@@ -99,16 +85,16 @@ class _OffersScreenState extends State<OffersScreen> {
   Future<void> _selectDate(BuildContext context) async {
     final DateTime? picked = await showDatePicker(
       context: context,
-      initialDate: DateTime(2026, 9, 2),
+      initialDate: _selectedDate ?? DateTime.now(),
       firstDate: DateTime.now(),
       lastDate: DateTime(2030),
       builder: (context, child) {
         return Theme(
           data: Theme.of(context).copyWith(
             colorScheme: const ColorScheme.light(
-              primary: Color(0xFF1E3A8A), // header bg color
-              onPrimary: Colors.white, // header text color
-              onSurface: Colors.black, // body text color
+              primary: Color(0xFF1E3A8A),
+              onPrimary: Colors.white,
+              onSurface: Colors.black,
             ),
           ),
           child: child!,
@@ -117,38 +103,47 @@ class _OffersScreenState extends State<OffersScreen> {
     );
     if (picked != null) {
       setState(() {
+        _selectedDate = picked;
         _dateController.text = DateFormat('dd/MM/yyyy').format(picked);
       });
     }
   }
 
-  void _handlePublish() {
+  Future<void> _handlePublish() async {
     if (_titleController.text.isEmpty || _detailsController.text.isEmpty) {
       ToastService.show(title: 'Validation Error', message: 'Please fill in all offer details.', type: ToastType.error);
       return;
     }
 
-    setState(() {
-      _activeOffers.insert(0, AppOffer(
-        id: DateTime.now().millisecondsSinceEpoch.toString(),
+    setState(() => _isPublishing = true);
+    try {
+      await OfferService.instance.createOffer(
         title: _titleController.text,
         details: _detailsController.text,
         category: _selectedCategory,
-        expiryDate: _dateController.text,
-        accentColor: _selectedColor,
-      ));
-      
+        colorName: AppOffer.nameFromColor(_selectedColor),
+        endsAt: _selectedDate == null ? null : DateFormat('yyyy-MM-dd').format(_selectedDate!),
+      );
+
       _titleController.clear();
       _detailsController.clear();
-      _showSuccessHint = true;
-    });
+      setState(() {
+        _selectedDate = null;
+        _dateController.clear();
+        _showSuccessHint = true;
+      });
+      await _loadOffers();
 
-    ToastService.show(title: 'Offer Published', message: 'The offer is now live for customers.', type: ToastType.success);
+      ToastService.show(title: 'Offer Published', message: 'The offer is now live for customers.', type: ToastType.success);
 
-    // Hide success hint after 3 seconds
-    Future.delayed(const Duration(seconds: 3), () {
-      if (mounted) setState(() => _showSuccessHint = false);
-    });
+      Future.delayed(const Duration(seconds: 3), () {
+        if (mounted) setState(() => _showSuccessHint = false);
+      });
+    } catch (e) {
+      ToastService.show(title: 'Error', message: 'Could not publish offer: $e', type: ToastType.error);
+    } finally {
+      if (mounted) setState(() => _isPublishing = false);
+    }
   }
 
   Future<void> _handleDeleteOffer(AppOffer offer) async {
@@ -161,23 +156,31 @@ class _OffersScreenState extends State<OffersScreen> {
       confirmButtonColor: AppColors.kDanger,
     );
 
-    if (confirmed == true) {
-      setState(() {
-        _activeOffers.removeWhere((o) => o.id == offer.id);
-      });
+    if (confirmed != true) return;
+
+    try {
+      await OfferService.instance.deleteOffer(offer.id);
+      setState(() => _activeOffers.removeWhere((o) => o.id == offer.id));
       ToastService.show(title: 'Deleted', message: 'Offer has been removed.', type: ToastType.success);
+    } catch (e) {
+      ToastService.show(title: 'Error', message: 'Could not delete offer: $e', type: ToastType.error);
     }
   }
 
-  void _toggleHideOffer(AppOffer offer) {
-    setState(() {
-      offer.isHidden = !offer.isHidden;
-    });
-    ToastService.show(
-      title: offer.isHidden ? 'Offer Hidden' : 'Offer Visible', 
-      message: offer.isHidden ? 'Customers will no longer see this.' : 'Offer is live again.', 
-      type: ToastType.info
-    );
+  Future<void> _toggleHideOffer(AppOffer offer) async {
+    final previous = offer.isHidden;
+    setState(() => offer.isHidden = !offer.isHidden);
+    try {
+      await OfferService.instance.toggleOffer(offer.id);
+      ToastService.show(
+        title: offer.isHidden ? 'Offer Hidden' : 'Offer Visible',
+        message: offer.isHidden ? 'Customers will no longer see this.' : 'Offer is live again.',
+        type: ToastType.info,
+      );
+    } catch (e) {
+      setState(() => offer.isHidden = previous);
+      ToastService.show(title: 'Error', message: 'Could not update offer: $e', type: ToastType.error);
+    }
   }
 
   @override
@@ -190,7 +193,6 @@ class _OffersScreenState extends State<OffersScreen> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              // --- 1. Global Search Bar ---
               Container(
                 decoration: BoxDecoration(
                   color: Colors.white,
@@ -209,7 +211,6 @@ class _OffersScreenState extends State<OffersScreen> {
               ),
               const SizedBox(height: 24),
 
-              // --- 2. Process Monthly Yield Button ---
               Align(
                 alignment: Alignment.centerRight,
                 child: ElevatedButton.icon(
@@ -217,7 +218,7 @@ class _OffersScreenState extends State<OffersScreen> {
                   icon: const Icon(Icons.bolt, size: 16),
                   label: const Text('PROCESS MONTHLY YIELD', style: TextStyle(fontWeight: FontWeight.w900, fontStyle: FontStyle.italic, fontSize: 12, letterSpacing: 0.5)),
                   style: ElevatedButton.styleFrom(
-                    backgroundColor: const Color(0xFF1E3A8A), // Navy Blue
+                    backgroundColor: const Color(0xFF1E3A8A),
                     foregroundColor: Colors.white,
                     padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
                     shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
@@ -228,31 +229,14 @@ class _OffersScreenState extends State<OffersScreen> {
               ),
               const SizedBox(height: 24),
 
-              // --- 3. Page Header ---
-              const Text(
-                'OFFERS & FESTIVAL BANNERS',
-                style: TextStyle(
-                  fontSize: 22,
-                  fontWeight: FontWeight.w900,
-                  fontStyle: FontStyle.italic,
-                  color: Color(0xFF1E3A8A),
-                  letterSpacing: -0.5,
-                ),
-              ),
+              const Text('OFFERS & FESTIVAL BANNERS', style: TextStyle(fontSize: 22, fontWeight: FontWeight.w900, fontStyle: FontStyle.italic, color: Color(0xFF1E3A8A), letterSpacing: -0.5)),
               const SizedBox(height: 4),
               Text(
                 'ACTIVE OFFERS POP UP WHEN CUSTOMERS LOG IN',
-                style: TextStyle(
-                  fontSize: 10,
-                  fontWeight: FontWeight.w900,
-                  fontStyle: FontStyle.italic,
-                  color: const Color(0xFF94A3B8).withOpacity(0.9),
-                  letterSpacing: 1.5,
-                ),
+                style: TextStyle(fontSize: 10, fontWeight: FontWeight.w900, fontStyle: FontStyle.italic, color: const Color(0xFF94A3B8).withOpacity(0.9), letterSpacing: 1.5),
               ),
               const SizedBox(height: 24),
 
-              // --- 4. New Offer Form Card ---
               Container(
                 decoration: BoxDecoration(
                   color: Colors.white,
@@ -263,98 +247,60 @@ class _OffersScreenState extends State<OffersScreen> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    // Header
                     Row(
                       children: [
                         Container(
                           padding: const EdgeInsets.all(12),
-                          decoration: BoxDecoration(
-                            color: const Color(0xFFD97706), // Gold
-                            borderRadius: BorderRadius.circular(12),
-                          ),
+                          decoration: BoxDecoration(color: const Color(0xFFD97706), borderRadius: BorderRadius.circular(12)),
                           child: const Icon(Icons.card_giftcard, color: Colors.white, size: 20),
                         ),
                         const SizedBox(width: 16),
-                        const Text(
-                          'NEW OFFER',
-                          style: TextStyle(fontSize: 16, fontWeight: FontWeight.w900, fontStyle: FontStyle.italic, color: Color(0xFF1E3A8A)),
-                        ),
+                        const Text('NEW OFFER', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w900, fontStyle: FontStyle.italic, color: Color(0xFF1E3A8A))),
                       ],
                     ),
                     const SizedBox(height: 24),
 
-                    // Title Input
-                    _buildTextInput(
-                      controller: _titleController,
-                      hintText: 'Offer title (e.g. Diwali Gold Bonanza)',
-                    ),
+                    _buildTextInput(controller: _titleController, hintText: 'Offer title (e.g. Diwali Gold Bonanza)'),
+                    const SizedBox(height: 16),
+                    _buildTextInput(controller: _detailsController, hintText: 'Offer details / message...', maxLines: 4),
                     const SizedBox(height: 16),
 
-                    // Details Input
-                    _buildTextInput(
-                      controller: _detailsController,
-                      hintText: 'Offer details / message...',
-                      maxLines: 4,
-                    ),
-                    const SizedBox(height: 16),
+                    LayoutBuilder(builder: (context, constraints) {
+                      bool isMobile = constraints.maxWidth < 500;
+                      Widget categoryDropdown = _buildDropdown();
+                      Widget datePicker = _buildDatePicker();
 
-                    // Category & Date Row
-                    LayoutBuilder(
-                      builder: (context, constraints) {
-                        bool isMobile = constraints.maxWidth < 500;
-                        Widget categoryDropdown = _buildDropdown();
-                        Widget datePicker = _buildDatePicker();
-
-                        if (isMobile) {
-                          return Column(
-                            children: [
-                              categoryDropdown,
-                              const SizedBox(height: 16),
-                              datePicker,
-                            ],
-                          );
-                        }
-                        return Row(
-                          children: [
-                            Expanded(child: categoryDropdown),
-                            const SizedBox(width: 16),
-                            Expanded(child: datePicker),
-                          ],
-                        );
+                      if (isMobile) {
+                        return Column(children: [categoryDropdown, const SizedBox(height: 16), datePicker]);
                       }
-                    ),
+                      return Row(children: [Expanded(child: categoryDropdown), const SizedBox(width: 16), Expanded(child: datePicker)]);
+                    }),
                     const SizedBox(height: 24),
 
-                    // Accent Color Picker
                     const Text('ACCENT COLOR', style: TextStyle(fontSize: 10, fontWeight: FontWeight.w900, fontStyle: FontStyle.italic, color: Color(0xFF94A3B8), letterSpacing: 2)),
                     const SizedBox(height: 12),
-                    Row(
-                      children: _accentColors.map((color) => _buildColorCircle(color)).toList(),
-                    ),
+                    Row(children: _accentColors.map((color) => _buildColorCircle(color)).toList()),
                     const SizedBox(height: 24),
 
-                    // Success Hint (Conditional)
                     if (_showSuccessHint) ...[
                       Row(
                         children: [
                           const Icon(Icons.check_circle_outline, color: Color(0xFF10B981), size: 16),
                           const SizedBox(width: 8),
-                          const Text(
-                            'OFFER PUBLISHED — IT WILL SHOW ON CUSTOMER LOGIN.',
-                            style: TextStyle(fontSize: 10, fontWeight: FontWeight.w900, fontStyle: FontStyle.italic, color: Color(0xFF10B981), letterSpacing: 1),
-                          ),
+                          const Text('OFFER PUBLISHED — IT WILL SHOW ON CUSTOMER LOGIN.', style: TextStyle(fontSize: 10, fontWeight: FontWeight.w900, fontStyle: FontStyle.italic, color: Color(0xFF10B981), letterSpacing: 1)),
                         ],
                       ),
                       const SizedBox(height: 16),
                     ],
 
-                    // Publish Button
                     ElevatedButton.icon(
-                      onPressed: _handlePublish,
-                      icon: const Icon(Icons.add, size: 16),
-                      label: const Text('PUBLISH OFFER', style: TextStyle(fontWeight: FontWeight.w900, fontStyle: FontStyle.italic, fontSize: 13, letterSpacing: 1.5)),
+                      onPressed: _isPublishing ? null : _handlePublish,
+                      icon: _isPublishing
+                          ? const SizedBox(width: 14, height: 14, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
+                          : const Icon(Icons.add, size: 16),
+                      label: Text(_isPublishing ? 'PUBLISHING...' : 'PUBLISH OFFER', style: const TextStyle(fontWeight: FontWeight.w900, fontStyle: FontStyle.italic, fontSize: 13, letterSpacing: 1.5)),
                       style: ElevatedButton.styleFrom(
-                        backgroundColor: const Color(0xFF2563EB), // Bright Blue
+                        backgroundColor: const Color(0xFF2563EB),
                         foregroundColor: Colors.white,
                         padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 20),
                         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
@@ -366,18 +312,17 @@ class _OffersScreenState extends State<OffersScreen> {
               ),
               const SizedBox(height: 24),
 
-              // --- 5. Active Offers List ---
-              if (_activeOffers.isNotEmpty) ...[
+              if (_isLoading)
+                const Padding(padding: EdgeInsets.symmetric(vertical: 60), child: Center(child: AppLoader()))
+              else if (_activeOffers.isNotEmpty)
                 ListView.separated(
                   shrinkWrap: true,
                   physics: const NeverScrollableScrollPhysics(),
                   itemCount: _activeOffers.length,
                   separatorBuilder: (context, index) => const SizedBox(height: 16),
-                  itemBuilder: (context, index) {
-                    return _buildActiveOfferCard(_activeOffers[index]);
-                  },
-                ),
-              ] else ...[
+                  itemBuilder: (context, index) => _buildActiveOfferCard(_activeOffers[index]),
+                )
+              else
                 Container(
                   padding: const EdgeInsets.all(32),
                   alignment: Alignment.center,
@@ -386,20 +331,14 @@ class _OffersScreenState extends State<OffersScreen> {
                     borderRadius: BorderRadius.circular(32),
                     border: Border.all(color: AppColors.kBorder),
                   ),
-                  child: const Text(
-                    'NO ACTIVE OFFERS',
-                    style: TextStyle(fontWeight: FontWeight.w900, fontStyle: FontStyle.italic, color: AppColors.kTextMuted),
-                  ),
-                )
-              ]
+                  child: const Text('NO ACTIVE OFFERS', style: TextStyle(fontWeight: FontWeight.w900, fontStyle: FontStyle.italic, color: AppColors.kTextMuted)),
+                ),
             ],
           ),
         ),
       ),
     );
   }
-
-  // --- Sub-Components ---
 
   Widget _buildTextInput({required TextEditingController controller, required String hintText, int maxLines = 1}) {
     return TextFormField(
@@ -423,7 +362,7 @@ class _OffersScreenState extends State<OffersScreen> {
     return DropdownButtonFormField<String>(
       value: _selectedCategory,
       onChanged: (val) => setState(() => _selectedCategory = val!),
-      icon: const SizedBox.shrink(), // Hiding standard icon to match design if desired, or keep it
+      icon: const SizedBox.shrink(),
       style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w900, fontStyle: FontStyle.italic, color: Color(0xFF1E3A8A)),
       decoration: InputDecoration(
         fillColor: Colors.white,
@@ -442,8 +381,9 @@ class _OffersScreenState extends State<OffersScreen> {
       controller: _dateController,
       readOnly: true,
       onTap: () => _selectDate(context),
-      style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w900, fontStyle: FontStyle.italic, color: Color(0xFF3B82F6)), // Blue text for date
+      style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w900, fontStyle: FontStyle.italic, color: Color(0xFF3B82F6)),
       decoration: InputDecoration(
+        hintText: 'Expiry date (optional)',
         fillColor: Colors.white,
         filled: true,
         contentPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
@@ -482,7 +422,6 @@ class _OffersScreenState extends State<OffersScreen> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          // Colored Top Border Indicator
           Container(
             height: 6,
             decoration: BoxDecoration(
@@ -495,7 +434,6 @@ class _OffersScreenState extends State<OffersScreen> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                // Badges
                 Row(
                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
@@ -504,24 +442,17 @@ class _OffersScreenState extends State<OffersScreen> {
                       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
                       decoration: BoxDecoration(color: const Color(0xFFECFDF5), borderRadius: BorderRadius.circular(12)),
                       child: Text(offer.isHidden ? 'HIDDEN' : 'ACTIVE', style: TextStyle(fontSize: 8, fontWeight: FontWeight.w900, fontStyle: FontStyle.italic, color: offer.isHidden ? AppColors.kTextMuted : const Color(0xFF10B981))),
-                    )
+                    ),
                   ],
                 ),
                 const SizedBox(height: 16),
-                
-                // Content
                 Text(offer.title, style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w900, fontStyle: FontStyle.italic, color: Color(0xFF1E3A8A))),
                 const SizedBox(height: 8),
                 Text(offer.details, style: const TextStyle(fontSize: 12, color: Color(0xFF64748B))),
                 const SizedBox(height: 16),
-                Text('ENDS ${offer.expiryDate}', style: const TextStyle(fontSize: 9, fontWeight: FontWeight.w900, fontStyle: FontStyle.italic, color: Color(0xFF94A3B8))),
-                
-                const Padding(
-                  padding: EdgeInsets.symmetric(vertical: 16.0),
-                  child: Divider(height: 1, color: AppColors.kBorder),
-                ),
-
-                // Actions
+                if (offer.expiryDate != null)
+                  Text('ENDS ${offer.expiryDate}', style: const TextStyle(fontSize: 9, fontWeight: FontWeight.w900, fontStyle: FontStyle.italic, color: Color(0xFF94A3B8))),
+                const Padding(padding: EdgeInsets.symmetric(vertical: 16.0), child: Divider(height: 1, color: AppColors.kBorder)),
                 Row(
                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [

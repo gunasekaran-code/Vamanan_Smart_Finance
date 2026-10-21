@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:frontend/core/theme/app_theme.dart';
 import 'package:frontend/shared/widgets/app_toast.dart';
+import 'package:frontend/services/settings_service.dart';
+import 'package:frontend/shared/widgets/app_loader.dart';
 
 class FinanceParametersWidget extends StatefulWidget {
   const FinanceParametersWidget({super.key});
@@ -22,6 +24,39 @@ class _FinanceParametersWidgetState extends State<FinanceParametersWidget> {
   final TextEditingController _goldSilverGstCtrl = TextEditingController(text: '3');
   final TextEditingController _otherGstCtrl = TextEditingController(text: '10');
   final TextEditingController _processingFeeCtrl = TextEditingController(text: '10');
+  bool _isLoading = true;
+  bool _isSaving = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadSettings();
+  }
+
+  Future<void> _loadSettings() async {
+    try {
+      final settings = await SettingsService.instance.fetchSettings();
+      if (!mounted) return;
+      final values = {
+        _referralCtrl: settings.value('referral_commission_rate', _referralCtrl.text),
+        _durationCtrl: settings.value('plan_duration_months', _durationCtrl.text),
+        _tdsCtrl: settings.value('tds_rate', _tdsCtrl.text),
+        _serviceChargeCtrl: settings.value('service_charge_rate', _serviceChargeCtrl.text),
+        _minInvestmentCtrl: settings.value('min_investment', _minInvestmentCtrl.text),
+        _minWithdrawalCtrl: settings.value('min_withdrawal', _minWithdrawalCtrl.text),
+        _goldPriceCtrl: settings.value('gold_base_price', _goldPriceCtrl.text),
+        _silverPriceCtrl: settings.value('silver_base_price', _silverPriceCtrl.text),
+        _goldSilverGstCtrl: settings.value('gold_gst', _goldSilverGstCtrl.text),
+        _otherGstCtrl: settings.value('general_gst', _otherGstCtrl.text),
+        _processingFeeCtrl: settings.value('payout_processing_fee', _processingFeeCtrl.text),
+      };
+      values.forEach((controller, value) => controller.text = value);
+      setState(() => _isLoading = false);
+    } catch (error) {
+      if (mounted) setState(() => _isLoading = false);
+      ToastService.show(title: 'Load Failed', message: error.toString(), type: ToastType.error);
+    }
+  }
 
   @override
   void dispose() {
@@ -39,12 +74,33 @@ class _FinanceParametersWidgetState extends State<FinanceParametersWidget> {
     super.dispose();
   }
 
-  void _handleSynchronizeProtocol() {
+  Future<void> _handleSynchronizeProtocol() async {
+    setState(() => _isSaving = true);
+    try {
+      await SettingsService.instance.saveSettings({
+        'referral_commission_rate': _referralCtrl.text.trim(),
+        'plan_duration_months': _durationCtrl.text.trim(),
+        'tds_rate': _tdsCtrl.text.trim(),
+        'service_charge_rate': _serviceChargeCtrl.text.trim(),
+        'min_investment': _minInvestmentCtrl.text.trim(),
+        'min_withdrawal': _minWithdrawalCtrl.text.trim(),
+        'gold_base_price': _goldPriceCtrl.text.trim(),
+        'silver_base_price': _silverPriceCtrl.text.trim(),
+        'gold_gst': _goldSilverGstCtrl.text.trim(),
+        'general_gst': _otherGstCtrl.text.trim(),
+        'payout_processing_fee': _processingFeeCtrl.text.trim(),
+      });
+      if (!mounted) return;
     ToastService.show(
       title: 'Parameters Synchronized', 
       message: 'Global financial parameters have been updated across the platform.', 
       type: ToastType.success
-    );
+      );
+    } catch (error) {
+      if (mounted) ToastService.show(title: 'Save Failed', message: error.toString(), type: ToastType.error);
+    } finally {
+      if (mounted) setState(() => _isSaving = false);
+    }
   }
 
   @override
@@ -56,7 +112,9 @@ class _FinanceParametersWidgetState extends State<FinanceParametersWidget> {
         border: Border.all(color: AppColors.kBorder),
       ),
       padding: const EdgeInsets.all(32.0),
-      child: Column(
+        child: _isLoading
+          ? const Center(child: AppLoader())
+          : Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           // Responsive Form Grid
@@ -134,7 +192,7 @@ class _FinanceParametersWidgetState extends State<FinanceParametersWidget> {
           Align(
             alignment: Alignment.centerRight,
             child: ElevatedButton.icon(
-              onPressed: _handleSynchronizeProtocol,
+              onPressed: _isSaving ? null : _handleSynchronizeProtocol,
               icon: const Icon(Icons.shield_outlined, size: 16),
               label: const Text(
                 'SYNCHRONIZE PROTOCOL', 

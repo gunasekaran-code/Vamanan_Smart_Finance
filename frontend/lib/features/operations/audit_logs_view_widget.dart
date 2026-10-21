@@ -1,25 +1,11 @@
 import 'package:flutter/material.dart';
 import 'package:frontend/core/theme/app_theme.dart';
+import 'package:frontend/models/tally_integration_model.dart';
+import 'package:frontend/services/tally_integration_service.dart';
+import 'tally_state_views.dart';
 
-// --- Mock Data Model ---
-class AuditEntry {
-  final String time;
-  final String action;
-  final String entity;
-  final String detail;
-  final String amount;
-  final String actor;
-
-  AuditEntry({
-    required this.time,
-    required this.action,
-    required this.entity,
-    required this.detail,
-    required this.amount,
-    required this.actor,
-  });
-}
-
+/// The immutable audit trail (`?resource=audit`) — every export, sync, voucher
+/// change and settings save the hub has recorded.
 class AuditLogsViewWidget extends StatefulWidget {
   const AuditLogsViewWidget({super.key});
 
@@ -28,28 +14,45 @@ class AuditLogsViewWidget extends StatefulWidget {
 }
 
 class _AuditLogsViewWidgetState extends State<AuditLogsViewWidget> {
-  // Mock Data matching the design image
-  final List<AuditEntry> _entries = [
-    AuditEntry(
-      time: '2026-09-02 15:48:40',
-      action: 'export',
-      entity: 'Ledger #Inventory',
-      detail: 'Exported Inventory Ledger as xml (37 rows)',
-      amount: '—',
-      actor: 'admin',
-    ),
-    AuditEntry(
-      time: '2026-07-27 10:06:38',
-      action: 'export',
-      entity: 'Ledger #Inventory',
-      detail: 'Exported Inventory Ledger as xml (0 rows)',
-      amount: '—',
-      actor: 'admin',
-    ),
-  ];
+  final TallyIntegrationService _service = TallyIntegrationService();
+
+  List<TallyAuditEntry> _entries = const [];
+  bool _isLoading = true;
+  String? _error;
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  Future<void> _load() async {
+    setState(() {
+      _isLoading = true;
+      _error = null;
+    });
+    try {
+      final entries = await _service.fetchAuditLog();
+      if (!mounted) return;
+      setState(() => _entries = entries);
+    } on TallyIntegrationException catch (e) {
+      if (mounted) setState(() => _error = e.message);
+    } catch (e) {
+      if (mounted) setState(() => _error = 'Something went wrong: $e');
+    } finally {
+      if (mounted) setState(() => _isLoading = false);
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
+    if (_isLoading && _entries.isEmpty) {
+      return const TallyLoadingCard(label: 'LOADING AUDIT TRAIL');
+    }
+    if (_error != null && _entries.isEmpty) {
+      return TallyErrorCard(message: _error!, onRetry: _load);
+    }
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
@@ -75,7 +78,7 @@ class _AuditLogsViewWidgetState extends State<AuditLogsViewWidget> {
                           fontSize: 16,
                           fontWeight: FontWeight.w900,
                           fontStyle: FontStyle.italic,
-                          color: Color(0xFF1E3A8A), // Navy Blue
+                          color: kTallyNavy,
                           letterSpacing: 2,
                         ),
                       ),
@@ -86,9 +89,21 @@ class _AuditLogsViewWidgetState extends State<AuditLogsViewWidget> {
                         fontSize: 12,
                         fontWeight: FontWeight.w900,
                         fontStyle: FontStyle.italic,
-                        color: const Color(0xFF94A3B8).withOpacity(0.8),
+                        color: kTallyMuted.withOpacity(0.8),
                         letterSpacing: 1,
                       ),
+                    ),
+                    IconButton(
+                      tooltip: 'Refresh',
+                      onPressed: _isLoading ? null : _load,
+                      icon: _isLoading
+                          ? const SizedBox(
+                              width: 16,
+                              height: 16,
+                              child: CircularProgressIndicator(
+                                  strokeWidth: 2, color: kTallyGold),
+                            )
+                          : const Icon(Icons.refresh, size: 18, color: kTallyGold),
                     ),
                   ],
                 ),
@@ -96,72 +111,86 @@ class _AuditLogsViewWidgetState extends State<AuditLogsViewWidget> {
               const Divider(height: 1, color: AppColors.kBorder),
 
               // --- 2. Scrollable Data Table ---
-              SingleChildScrollView(
-                scrollDirection: Axis.horizontal,
-                child: ConstrainedBox(
-                  constraints: BoxConstraints(
-                    minWidth: MediaQuery.of(context).size.width - 48, // Fills container width
-                  ),
-                  child: DataTable(
-                    columnSpacing: 40,
-                    headingRowHeight: 56,
-                    dataRowMinHeight: 72,
-                    dataRowMaxHeight: 72,
-                    headingRowColor: WidgetStateProperty.all(const Color(0xFFF8FAFC)),
-                    dividerThickness: 1,
-                    headingTextStyle: const TextStyle(
+              if (_entries.isEmpty)
+                const Padding(
+                  padding: EdgeInsets.symmetric(vertical: 60, horizontal: 24),
+                  child: Text(
+                    'NO AUDIT ENTRIES YET',
+                    textAlign: TextAlign.center,
+                    style: TextStyle(
+                      fontSize: 11,
                       fontWeight: FontWeight.w900,
                       fontStyle: FontStyle.italic,
-                      color: Color(0xFF94A3B8),
-                      fontSize: 9,
+                      color: kTallyMuted,
                       letterSpacing: 1.5,
                     ),
-                    columns: const [
-                      DataColumn(label: Text('TIME')),
-                      DataColumn(label: Text('ACTION')),
-                      DataColumn(label: Text('ENTITY')),
-                      DataColumn(label: Text('DETAIL')),
-                      DataColumn(label: Text('AMOUNT')),
-                      DataColumn(label: Text('ACTOR')),
-                    ],
-                    rows: _entries.map((entry) {
-                      return DataRow(
-                        cells: [
-                          DataCell(Text(
-                            entry.time, 
-                            style: const TextStyle(fontWeight: FontWeight.w900, fontStyle: FontStyle.italic, color: Color(0xFF94A3B8), fontSize: 13),
-                          )),
-                          DataCell(Text(
-                            entry.action, 
-                            style: const TextStyle(fontWeight: FontWeight.w900, fontStyle: FontStyle.italic, color: Color(0xFF1E3A8A), fontSize: 13),
-                          )),
-                          DataCell(Text(
-                            entry.entity, 
-                            style: const TextStyle(fontWeight: FontWeight.w900, fontStyle: FontStyle.italic, color: Color(0xFF334155), fontSize: 13),
-                          )),
-                          DataCell(Text(
-                            entry.detail, 
-                            style: const TextStyle(fontWeight: FontWeight.w900, fontStyle: FontStyle.italic, color: Color(0xFF334155), fontSize: 13),
-                          )),
-                          DataCell(Text(
-                            entry.amount, 
-                            style: const TextStyle(fontWeight: FontWeight.w900, color: Color(0xFF334155), fontSize: 13),
-                          )),
-                          DataCell(Text(
-                            entry.actor, 
-                            style: const TextStyle(fontWeight: FontWeight.w900, fontStyle: FontStyle.italic, color: Color(0xFF334155), fontSize: 13),
-                          )),
-                        ],
-                      );
-                    }).toList(),
+                  ),
+                )
+              else
+                SingleChildScrollView(
+                  scrollDirection: Axis.horizontal,
+                  child: ConstrainedBox(
+                    constraints: BoxConstraints(
+                      minWidth: MediaQuery.of(context).size.width - 48,
+                    ),
+                    child: DataTable(
+                      columnSpacing: 40,
+                      headingRowHeight: 56,
+                      dataRowMinHeight: 72,
+                      dataRowMaxHeight: 72,
+                      headingRowColor: WidgetStateProperty.all(kTallyTint),
+                      dividerThickness: 1,
+                      headingTextStyle: const TextStyle(
+                        fontWeight: FontWeight.w900,
+                        fontStyle: FontStyle.italic,
+                        color: kTallyMuted,
+                        fontSize: 9,
+                        letterSpacing: 1.5,
+                      ),
+                      columns: const [
+                        DataColumn(label: Text('TIME')),
+                        DataColumn(label: Text('ACTION')),
+                        DataColumn(label: Text('ENTITY')),
+                        DataColumn(label: Text('DETAIL')),
+                        DataColumn(label: Text('AMOUNT')),
+                        DataColumn(label: Text('ACTOR')),
+                      ],
+                      rows: _entries.map(_buildRow).toList(),
+                    ),
                   ),
                 ),
-              ),
-              // Padding at the bottom for aesthetic spacing
               const SizedBox(height: 16),
             ],
           ),
         ),
+      ],
+    );
+  }
+
+  DataRow _buildRow(TallyAuditEntry entry) {
+    const cellStyle = TextStyle(
+      fontWeight: FontWeight.w900,
+      fontStyle: FontStyle.italic,
+      color: Color(0xFF334155),
+      fontSize: 13,
+    );
+
+    return DataRow(
+      cells: [
+        DataCell(Text(entry.createdAt,
+            style: cellStyle.copyWith(color: kTallyMuted))),
+        DataCell(Text(entry.action, style: cellStyle.copyWith(color: kTallyNavy))),
+        DataCell(Text(entry.entityDisplay, style: cellStyle)),
+        DataCell(
+          SizedBox(
+            width: 320,
+            child: Text(entry.detail, style: cellStyle, overflow: TextOverflow.ellipsis),
+          ),
+        ),
+        DataCell(Text(entry.amountDisplay,
+            style: const TextStyle(
+                fontWeight: FontWeight.w900, color: Color(0xFF334155), fontSize: 13))),
+        DataCell(Text(entry.actor, style: cellStyle)),
       ],
     );
   }

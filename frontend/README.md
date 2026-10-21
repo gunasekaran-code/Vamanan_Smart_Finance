@@ -105,13 +105,13 @@ static const List<NavEntry> navEntries = [
 ];
 ```
 
-| Page      | Super Admin | Admin | Staff | Customer |
-|-----------|:-----------:|:-----:|:-----:|:--------:|
-| Dashboard | ✅           |  ✅   |  ✅   |    ✅    |
-| Members   | ✅ | ✅ | ✅ | ❌ |
-| Verify    | ✅ | ✅ | ✅ | ❌ |
-| Reports   | ✅ | ✅ | ❌ | ❌ |
-| Profile   | ✅ | ✅ | ✅ | ✅ |
+| Page      | Super Admin  | Admin | Staff | Customer |
+|-----------|:-----------: |:-----:|:-----:|:--------:|
+| Dashboard | ✅           |  ✅    |  ✅   |    ✅     |
+| Members   | ✅           | ✅     | ✅    |    ❌     |
+| Verify    | ✅           | ✅     | ✅    |    ❌     |
+| Reports   | ✅           | ✅     | ❌    |    ❌     |
+| Profile   | ✅           | ✅     | ✅    |    ✅     |
 
 This one list feeds three things, so there's nowhere else a permission needs
 to be duplicated:

@@ -4,6 +4,11 @@ import 'package:frontend/core/theme/confirm_dialog.dart';
 import 'package:frontend/shared/widgets/app_page.dart';
 import 'package:frontend/shared/widgets/app_toast.dart';
 
+import '../../models/auditor_request_model.dart';
+import '../../models/auditor_buy_model.dart' show AuditorSession;
+import '../../services/auditor_request_service.dart';
+import 'package:frontend/shared/widgets/app_loader.dart';
+
 class AuditorRequestScreen extends StatefulWidget {
   const AuditorRequestScreen({super.key});
 
@@ -21,6 +26,13 @@ class _AuditorRequestScreenState extends State<AuditorRequestScreen> {
   // State Variables
   int _quantity = 1;
   double _weight = 0.0;
+  bool _isSubmitting = false;
+
+  // Loaded prefill/history state
+  CustomerInfo? _customer;
+  List<ProductRequestItem> _requests = [];
+  bool _isLoadingPrefill = true;
+  String? _prefillError;
 
   // Theme Colors based on your AppTheme
   final Color _navyBlue = AppColors.kPrimaryDark;
@@ -29,12 +41,48 @@ class _AuditorRequestScreenState extends State<AuditorRequestScreen> {
   final Color _lightBg = const Color(0xFFF8FAFC);
 
   @override
+  void initState() {
+    super.initState();
+    _loadPrefill();
+  }
+
+  @override
   void dispose() {
     _productNameCtrl.dispose();
     _categoryCtrl.dispose();
     _productModelCtrl.dispose();
     _detailsCtrl.dispose();
     super.dispose();
+  }
+
+  Future<void> _loadPrefill() async {
+    final userId = AuditorSession.currentUserId;
+    if (userId == null) {
+      setState(() {
+        _isLoadingPrefill = false;
+        _prefillError = 'You are not signed in. Sign in again to continue.';
+      });
+      return;
+    }
+
+    setState(() {
+      _isLoadingPrefill = true;
+      _prefillError = null;
+    });
+
+    try {
+      final prefill = await AuditorRequestService.fetchPrefill(userId);
+      if (!mounted) return;
+      setState(() {
+        _customer = prefill.user;
+        _requests = prefill.requests;
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _prefillError = e.toString());
+    } finally {
+      if (mounted) setState(() => _isLoadingPrefill = false);
+    }
   }
 
   // --- ACTIONS ---
@@ -48,6 +96,16 @@ class _AuditorRequestScreenState extends State<AuditorRequestScreen> {
       return;
     }
 
+    final userId = AuditorSession.currentUserId;
+    if (userId == null || _customer == null) {
+      ToastService.show(
+        title: 'Not Signed In',
+        message: 'Could not determine the logged-in customer. Please re-login and try again.',
+        type: ToastType.error,
+      );
+      return;
+    }
+
     final confirmed = await AppConfirmDialog.show(
       context: context,
       title: 'Submit Product Request',
@@ -56,7 +114,25 @@ class _AuditorRequestScreenState extends State<AuditorRequestScreen> {
       confirmButtonColor: _navyBlue,
     );
 
-    if (confirmed == true) {
+    if (confirmed != true) return;
+
+    setState(() => _isSubmitting = true);
+    try {
+      await AuditorRequestService.submitRequest(
+        userId: userId,
+        customerName: _customer!.name,
+        customerCode: _customer!.customerId,
+        customerEmail: _customer!.email,
+        phone: _customer!.phone,
+        productName: _productNameCtrl.text.trim(),
+        model: _productModelCtrl.text.trim(),
+        category: _categoryCtrl.text.trim().isEmpty ? 'Gold' : _categoryCtrl.text.trim(),
+        quantity: _quantity,
+        weight: _weight,
+        description: _detailsCtrl.text.trim(),
+      );
+
+      if (!mounted) return;
       ToastService.show(
         title: 'Request Submitted',
         message: 'Your product request has been forwarded to the admin team for review.',
@@ -68,9 +144,22 @@ class _AuditorRequestScreenState extends State<AuditorRequestScreen> {
         _productNameCtrl.clear();
         _productModelCtrl.clear();
         _detailsCtrl.clear();
+        _categoryCtrl.text = 'Gold';
         _quantity = 1;
         _weight = 0.0;
       });
+
+      // Refresh the request history so the new one appears immediately
+      await _loadPrefill();
+    } catch (e) {
+      if (!mounted) return;
+      ToastService.show(
+        title: 'Submission Failed',
+        message: e.toString(),
+        type: ToastType.error,
+      );
+    } finally {
+      if (mounted) setState(() => _isSubmitting = false);
     }
   }
 
@@ -97,7 +186,7 @@ class _AuditorRequestScreenState extends State<AuditorRequestScreen> {
       children: [
         Center(
           child: Container(
-            constraints: const BoxConstraints(maxWidth: 800), // Mobile & Tablet constraints
+                        constraints: const BoxConstraints(maxWidth: 800), 
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
@@ -128,12 +217,27 @@ class _AuditorRequestScreenState extends State<AuditorRequestScreen> {
                 _buildSectionCard(
                   title: 'REQUESTED BY',
                   icon: Icons.person_outline,
-                  children: [
-                    _buildReadOnlyField('CUSTOMER NAME', 'Test Auditor', Icons.person_outline),
-                    _buildReadOnlyField('CUSTOMER ID', 'VEV104', Icons.badge_outlined),
-                    _buildReadOnlyField('CUSTOMER E-MAIL ID', 'testauditor@gmail.com', Icons.mail_outline),
-                    _buildReadOnlyField('PHONE NO', '+91 00000 00000', Icons.phone_outlined, isLast: true),
-                  ],
+                  children: _isLoadingPrefill
+                      ? [const Padding(padding: EdgeInsets.symmetric(vertical: 24), child: Center(child: AppLoader()))]
+                      : _prefillError != null
+                          ? [
+                              Padding(
+                                padding: const EdgeInsets.symmetric(vertical: 16),
+                                child: Column(
+                                  children: [
+                                    Text(_prefillError!, textAlign: TextAlign.center, style: const TextStyle(color: Color(0xFFCBD5E1), fontSize: 10, fontWeight: FontWeight.w900, fontStyle: FontStyle.italic)),
+                                    const SizedBox(height: 12),
+                                    TextButton(onPressed: _loadPrefill, child: const Text('RETRY')),
+                                  ],
+                                ),
+                              )
+                            ]
+                          : [
+                              _buildReadOnlyField('CUSTOMER NAME', _customer?.name ?? '—', Icons.person_outline),
+                              _buildReadOnlyField('CUSTOMER ID', _customer?.customerId ?? '—', Icons.badge_outlined),
+                              _buildReadOnlyField('CUSTOMER E-MAIL ID', _customer?.email ?? '—', Icons.mail_outline),
+                              _buildReadOnlyField('PHONE NO', (_customer?.phone == null || _customer!.phone!.isEmpty) ? 'NOT SET' : _customer!.phone!, Icons.phone_outlined, isLast: true),
+                            ],
                 ),
                 const SizedBox(height: 24),
 
@@ -145,7 +249,7 @@ class _AuditorRequestScreenState extends State<AuditorRequestScreen> {
                     _buildInputField('PRODUCT NAME *', 'E.g. 24K Gold Bar (10g)', Icons.inventory_2_outlined, _productNameCtrl),
                     _buildInputField('CATEGORY', 'Gold', Icons.category_outlined, _categoryCtrl),
                     _buildInputField('PRODUCT MODEL', 'E.g. 22K Gold Coin', Icons.branding_watermark_outlined, _productModelCtrl),
-                    
+
                     // Quantity Counter
                     _buildCounterField(
                       label: 'QUANTITY',
@@ -153,7 +257,7 @@ class _AuditorRequestScreenState extends State<AuditorRequestScreen> {
                       onDecrement: () => _incrementQuantity(-1),
                       onIncrement: () => _incrementQuantity(1),
                     ),
-                    
+
                     // Weight Counter
                     _buildCounterField(
                       label: 'WEIGHT (G) — OPTIONAL',
@@ -164,9 +268,9 @@ class _AuditorRequestScreenState extends State<AuditorRequestScreen> {
 
                     // Additional Details Area
                     _buildTextArea('ADDITIONAL DETAILS / SPECIFICATIONS', 'Describe the product you\'d like us to add (brand, purity, model, etc.).', _detailsCtrl),
-                    
+
                     const SizedBox(height: 16),
-                    
+
                     // Info Banner
                     Container(
                       padding: const EdgeInsets.all(24),
@@ -197,9 +301,14 @@ class _AuditorRequestScreenState extends State<AuditorRequestScreen> {
                 SizedBox(
                   width: double.infinity,
                   child: ElevatedButton.icon(
-                    onPressed: _handleSubmitRequest,
-                    icon: const Icon(Icons.arrow_forward, size: 16),
-                    label: const Text('SUBMIT REQUEST', style: TextStyle(fontWeight: FontWeight.w900, fontStyle: FontStyle.italic, fontSize: 13, letterSpacing: 1.5)),
+                    onPressed: _isSubmitting ? null : _handleSubmitRequest,
+                    icon: _isSubmitting
+                        ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
+                        : const Icon(Icons.arrow_forward, size: 16),
+                    label: Text(
+                      _isSubmitting ? 'SUBMITTING...' : 'SUBMIT REQUEST',
+                      style: const TextStyle(fontWeight: FontWeight.w900, fontStyle: FontStyle.italic, fontSize: 13, letterSpacing: 1.5),
+                    ),
                     style: ElevatedButton.styleFrom(
                       backgroundColor: _navyBlue,
                       foregroundColor: Colors.white,
@@ -216,23 +325,7 @@ class _AuditorRequestScreenState extends State<AuditorRequestScreen> {
                 _buildSectionCard(
                   title: 'YOUR REQUESTS',
                   icon: Icons.access_time,
-                  children: [
-                    Container(
-                      width: double.infinity,
-                      padding: const EdgeInsets.symmetric(vertical: 60),
-                      child: Column(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        children: [
-                          Icon(Icons.inventory_2_outlined, size: 48, color: const Color(0xFFCBD5E1).withOpacity(0.5)),
-                          const SizedBox(height: 16),
-                          Text(
-                            'NO PRODUCT REQUESTS YET',
-                            style: TextStyle(color: const Color(0xFF94A3B8).withOpacity(0.8), fontSize: 10, fontWeight: FontWeight.w900, fontStyle: FontStyle.italic, letterSpacing: 1.0),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ],
+                  children: [_buildRequestsList()],
                 ),
                 const SizedBox(height: 40),
               ],
@@ -240,6 +333,104 @@ class _AuditorRequestScreenState extends State<AuditorRequestScreen> {
           ),
         ),
       ],
+    );
+  }
+
+  // ==========================================================================
+  // REQUEST HISTORY
+  // ==========================================================================
+
+  Widget _buildRequestsList() {
+    if (_isLoadingPrefill) {
+      return const Padding(
+        padding: EdgeInsets.symmetric(vertical: 40),
+        child: Center(child: AppLoader()),
+      );
+    }
+
+    if (_requests.isEmpty) {
+      return Container(
+        width: double.infinity,
+        padding: const EdgeInsets.symmetric(vertical: 60),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(Icons.inventory_2_outlined, size: 48, color: const Color(0xFFCBD5E1).withOpacity(0.5)),
+            const SizedBox(height: 16),
+            Text(
+              'NO PRODUCT REQUESTS YET',
+              style: TextStyle(color: const Color(0xFF94A3B8).withOpacity(0.8), fontSize: 10, fontWeight: FontWeight.w900, fontStyle: FontStyle.italic, letterSpacing: 1.0),
+            ),
+          ],
+        ),
+      );
+    }
+
+    return Column(
+      children: _requests.map((r) => _buildRequestTile(r)).toList(),
+    );
+  }
+
+  Widget _buildRequestTile(ProductRequestItem r) {
+    Color statusColor;
+    switch (r.status.toLowerCase()) {
+      case 'approved':
+      case 'fulfilled':
+        statusColor = Colors.green;
+        break;
+      case 'rejected':
+        statusColor = Colors.red;
+        break;
+      case 'reviewing':
+        statusColor = Colors.blue;
+        break;
+      default:
+        statusColor = AppColors.goldColor;
+    }
+
+    return Container(
+      margin: const EdgeInsets.only(bottom: 16),
+      padding: const EdgeInsets.all(20),
+      decoration: BoxDecoration(
+        color: _lightBg,
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(color: _lightBorder, width: 1.5),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Container(
+            width: 44,
+            height: 44,
+            decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(14), border: Border.all(color: _lightBorder)),
+            alignment: Alignment.center,
+            child: const Icon(Icons.inventory_2_outlined, color: AppColors.goldColor, size: 18),
+          ),
+          const SizedBox(width: 16),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(r.productName, style: TextStyle(color: _navyBlue, fontSize: 13, fontWeight: FontWeight.w900, fontStyle: FontStyle.italic)),
+                const SizedBox(height: 4),
+                Text(
+                  '${r.category.toUpperCase()} • QTY ${r.quantity}${r.weight > 0 ? ' • ${r.weight}G' : ''}',
+                  style: TextStyle(color: _slateText, fontSize: 10, fontWeight: FontWeight.w900, fontStyle: FontStyle.italic),
+                ),
+                if (r.adminNote != null && r.adminNote!.isNotEmpty) ...[
+                  const SizedBox(height: 8),
+                  Text('ADMIN NOTE: ${r.adminNote}', style: const TextStyle(color: Color(0xFFCBD5E1), fontSize: 9, fontWeight: FontWeight.w800, fontStyle: FontStyle.italic)),
+                ],
+              ],
+            ),
+          ),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+            decoration: BoxDecoration(color: statusColor.withOpacity(0.1), borderRadius: BorderRadius.circular(20), border: Border.all(color: statusColor.withOpacity(0.3))),
+            child: Text(r.status.toUpperCase(), style: TextStyle(color: statusColor, fontSize: 9, fontWeight: FontWeight.w900, fontStyle: FontStyle.italic, letterSpacing: 0.5)),
+          ),
+        ],
+      ),
     );
   }
 

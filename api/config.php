@@ -19,19 +19,13 @@
 //     $pdo->exec("CREATE DATABASE IF NOT EXISTS $db_name");
 //     $pdo->exec("USE $db_name");
 
-$host = "127.0.0.1";
-$port = 8889;
-$db_name = "makkal_gold";
-$username = "root";
-$password = "root";
+require_once __DIR__ . '/config/db.php';
+$database = new Database();
+$pdo = $database->getConnection();
 
-try {
-    $pdo = new PDO("mysql:host=$host;port=$port", $username, $password);
-    $pdo->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
-    
-    // Create database if not exists
-    $pdo->exec("CREATE DATABASE IF NOT EXISTS $db_name");
-    $pdo->exec("USE $db_name");
+if (!$pdo) {
+    die(json_encode(["status" => "error", "message" => "Database Connection/Init failed: Unable to connect to database."]));
+}
 
     // --- SELF-HEALING DATABASE INITIALIZATION ---
 
@@ -494,10 +488,6 @@ try {
     } catch (PDOException $e) {
         // Never let ID backfill break normal request handling.
     }
-
-} catch (PDOException $e) {
-    die(json_encode(["status" => "error", "message" => "Database Connection/Init failed: " . $e->getMessage()]));
-}
 
 // Global $pdo for backward compatibility if needed
 $db = $pdo;

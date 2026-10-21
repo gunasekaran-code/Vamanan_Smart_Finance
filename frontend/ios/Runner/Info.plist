@@ -7,7 +7,7 @@
 	<key>CFBundleDevelopmentRegion</key>
 	<string>$(DEVELOPMENT_LANGUAGE)</string>
 	<key>CFBundleDisplayName</key>
-	<string>Vamanan Gold</string>
+	<string>Vamanan V</string>
 	<key>CFBundleExecutable</key>
 	<string>$(EXECUTABLE_NAME)</string>
 	<key>CFBundleIdentifier</key>
@@ -15,7 +15,7 @@
 	<key>CFBundleInfoDictionaryVersion</key>
 	<string>6.0</string>
 	<key>CFBundleName</key>
-	<string>Vamanan Gold</string>
+	<string>Vamanan V</string>
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
 	<key>CFBundleShortVersionString</key>
@@ -74,5 +74,9 @@
 		<key>NSAllowsLocalNetworking</key>
 		<true/>
 	</dict>
+	<key>NSPhotoLibraryUsageDescription</key>
+	<string>Choose a photo to upload as a product image or profile picture.</string>
+	<key>NSCameraUsageDescription</key>
+	<string>Take a photo to upload as a product image or profile picture.</string>
 </dict>
 </plist>

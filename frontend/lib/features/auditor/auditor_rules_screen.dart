@@ -348,7 +348,7 @@ class AuditorRulesScreen extends StatelessWidget {
         children: [
           const Padding(
             padding: EdgeInsets.only(top: 4.0),
-            child: Icon(Icons.circle, color: AppColors.goldColor, size: 6),
+            child: Icon(Icons.star, color: AppColors.goldColor, size: 6),
           ),
           const SizedBox(width: 12),
           Expanded(
